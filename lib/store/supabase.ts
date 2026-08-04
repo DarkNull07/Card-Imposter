@@ -1,0 +1,323 @@
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
+import { MAX_PLAYERS } from '../config';
+import { DbMessage, DbPlayer, DbRoom, DbVote } from '../types';
+import { RoomSnapshot, Store } from './index';
+
+export class SupabaseStore implements Store {
+  private client: SupabaseClient | null = null;
+
+  constructor() {
+    const url = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (url && serviceKey) {
+      this.client = createClient(url, serviceKey, {
+        auth: { persistSession: false },
+      });
+    }
+  }
+
+  private getClient(): SupabaseClient {
+    if (!this.client) {
+      throw new Error('SUPABASE_ENV_MISSING: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing');
+    }
+    return this.client;
+  }
+
+  async getRoomByCode(code: string): Promise<RoomSnapshot | null> {
+    const supabase = this.getClient();
+    const uppercaseCode = code.toUpperCase();
+
+    const { data: room, error: roomError } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('code', uppercaseCode)
+      .single();
+
+    if (roomError || !room) {
+      return null;
+    }
+
+    const { data: players } = await supabase
+      .from('players')
+      .select('*')
+      .eq('room_id', room.id)
+      .order('joined_at', { ascending: true });
+
+    const { data: messages } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('room_id', room.id)
+      .order('created_at', { ascending: true });
+
+    const { data: votes } = await supabase
+      .from('votes')
+      .select('*')
+      .eq('room_id', room.id);
+
+    return {
+      room: room as DbRoom,
+      players: (players || []) as DbPlayer[],
+      messages: (messages || []) as DbMessage[],
+      votes: (votes || []) as DbVote[],
+    };
+  }
+
+  async createRoom(
+    code: string,
+    leaderTokenHash: string,
+    leaderName: string
+  ): Promise<{ room: DbRoom; player: DbPlayer }> {
+    const supabase = this.getClient();
+    const uppercaseCode = code.toUpperCase();
+    const now = new Date().toISOString();
+
+    const { data: room, error: roomError } = await supabase
+      .from('rooms')
+      .insert({
+        code: uppercaseCode,
+        phase: 'lobby',
+        round_number: 0,
+        match_number: 0,
+        version: 0,
+        created_at: now,
+        last_activity_at: now,
+      })
+      .select('*')
+      .single();
+
+    if (roomError || !room) {
+      if (roomError?.code === '23505') {
+        throw new Error('CONFLICT_RETRY');
+      }
+      throw new Error(`CREATE_ROOM_FAILED: ${roomError?.message}`);
+    }
+
+    const { data: player, error: playerError } = await supabase
+      .from('players')
+      .insert({
+        room_id: room.id,
+        token_hash: leaderTokenHash,
+        name: leaderName.trim(),
+        is_leader: true,
+        is_spectator: false,
+        is_eliminated: false,
+        score: 0,
+        joined_at: now,
+        last_seen_at: now,
+      })
+      .select('*')
+      .single();
+
+    if (playerError || !player) {
+      throw new Error(`CREATE_LEADER_FAILED: ${playerError?.message}`);
+    }
+
+    return { room: room as DbRoom, player: player as DbPlayer };
+  }
+
+  async joinRoom(
+    code: string,
+    tokenHash: string,
+    name: string
+  ): Promise<{ room: DbRoom; player: DbPlayer }> {
+    const supabase = this.getClient();
+
+    const snapshot = await this.getRoomByCode(code);
+    if (!snapshot) {
+      throw new Error('ROOM_NOT_FOUND');
+    }
+
+    const { room, players } = snapshot;
+
+    // Check room TTL (12h)
+    const lastActivityMs = new Date(room.last_activity_at).getTime();
+    if (Date.now() - lastActivityMs > 12 * 60 * 60 * 1000) {
+      throw new Error('ROOM_EXPIRED');
+    }
+
+    // Rejoin check
+    const existingPlayer = players.find((p) => p.token_hash === tokenHash);
+    if (existingPlayer) {
+      const now = new Date().toISOString();
+      const { data: updatedPlayer } = await supabase
+        .from('players')
+        .update({ name: name.trim(), last_seen_at: now })
+        .eq('id', existingPlayer.id)
+        .select('*')
+        .single();
+
+      return { room, player: (updatedPlayer || existingPlayer) as DbPlayer };
+    }
+
+    // Capacity check
+    if (players.length >= MAX_PLAYERS) {
+      throw new Error('ROOM_FULL');
+    }
+
+    // Name deduplication
+    let finalName = name.trim();
+    const existingNames = new Set(players.map((p) => p.name.toLowerCase()));
+    if (existingNames.has(finalName.toLowerCase())) {
+      let count = 2;
+      while (existingNames.has(`${finalName.toLowerCase()} (${count})`)) {
+        count++;
+      }
+      finalName = `${finalName} (${count})`;
+    }
+
+    const now = new Date().toISOString();
+    const isSpectator = room.phase !== 'lobby';
+
+    const { data: newPlayer, error: playerError } = await supabase
+      .from('players')
+      .insert({
+        room_id: room.id,
+        token_hash: tokenHash,
+        name: finalName,
+        is_leader: false,
+        is_spectator: isSpectator,
+        is_eliminated: false,
+        score: 0,
+        joined_at: now,
+        last_seen_at: now,
+      })
+      .select('*')
+      .single();
+
+    if (playerError || !newPlayer) {
+      throw new Error(`JOIN_FAILED: ${playerError?.message}`);
+    }
+
+    // Update room last activity and version
+    await supabase
+      .from('rooms')
+      .update({ version: room.version + 1, last_activity_at: now })
+      .eq('id', room.id);
+
+    return { room: { ...room, version: room.version + 1 }, player: newPlayer as DbPlayer };
+  }
+
+  async mutateRoom(
+    code: string,
+    tokenHash: string | null,
+    mutationFn: (
+      snapshot: RoomSnapshot,
+      actingPlayer: DbPlayer | null
+    ) => { room: DbRoom; players: DbPlayer[]; messages: DbMessage[]; votes: DbVote[] }
+  ): Promise<{ snapshot: RoomSnapshot; actingPlayer: DbPlayer | null }> {
+    const supabase = this.getClient();
+    const maxRetries = 5;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const snapshot = await this.getRoomByCode(code);
+      if (!snapshot) {
+        throw new Error('ROOM_NOT_FOUND');
+      }
+
+      const actingPlayer = tokenHash
+        ? snapshot.players.find((p) => p.token_hash === tokenHash) || null
+        : null;
+
+      const initialVersion = snapshot.room.version;
+      const result = mutationFn(snapshot, actingPlayer);
+
+      // Optimistic lock update: UPDATE rooms WHERE id = $1 AND version = $2
+      const { data: updatedRoomRows, error: updateError } = await supabase
+        .from('rooms')
+        .update({
+          phase: result.room.phase,
+          round_number: result.room.round_number,
+          crew_card: result.room.crew_card,
+          imposter_card: result.room.imposter_card,
+          imposter_player_id: result.room.imposter_player_id,
+          eliminated_player_id: result.room.eliminated_player_id,
+          outcome: result.room.outcome,
+          phase_ends_at: result.room.phase_ends_at,
+          match_number: result.room.match_number,
+          last_pair_index: result.room.last_pair_index,
+          version: result.room.version,
+          last_activity_at: result.room.last_activity_at,
+        })
+        .eq('id', snapshot.room.id)
+        .eq('version', initialVersion)
+        .select('*');
+
+      if (updateError || !updatedRoomRows || updatedRoomRows.length === 0) {
+        if (attempt < maxRetries) {
+          const jitter = Math.floor(25 + Math.random() * 50);
+          await new Promise((res) => setTimeout(res, jitter));
+          continue;
+        } else {
+          throw new Error('CONFLICT_RETRY');
+        }
+      }
+
+      // Sync players
+      for (const p of result.players) {
+        await supabase.from('players').upsert({
+          id: p.id,
+          room_id: p.room_id,
+          token_hash: p.token_hash,
+          name: p.name,
+          is_leader: p.is_leader,
+          is_spectator: p.is_spectator,
+          is_eliminated: p.is_eliminated,
+          score: p.score,
+          joined_at: p.joined_at,
+          last_seen_at: p.last_seen_at,
+        });
+      }
+
+      // Remove deleted players
+      const nextPlayerIds = new Set(result.players.map((p) => p.id));
+      for (const p of snapshot.players) {
+        if (!nextPlayerIds.has(p.id)) {
+          await supabase.from('players').delete().eq('id', p.id);
+        }
+      }
+
+      // Sync messages
+      for (const m of result.messages) {
+        await supabase.from('messages').upsert({
+          id: m.id,
+          room_id: m.room_id,
+          match_number: m.match_number,
+          round_number: m.round_number,
+          player_id: m.player_id,
+          body: m.body,
+          created_at: m.created_at,
+        });
+      }
+
+      // Sync votes
+      for (const v of result.votes) {
+        await supabase.from('votes').upsert({
+          id: v.id,
+          room_id: v.room_id,
+          match_number: v.match_number,
+          voter_id: v.voter_id,
+          target_id: v.target_id,
+          created_at: v.created_at,
+        });
+      }
+
+      const updatedSnapshot = await this.getRoomByCode(code);
+      const updatedActingPlayer = actingPlayer
+        ? updatedSnapshot?.players.find((p) => p.id === actingPlayer.id) || null
+        : null;
+
+      return { snapshot: updatedSnapshot!, actingPlayer: updatedActingPlayer };
+    }
+
+    throw new Error('CONFLICT_RETRY');
+  }
+
+  async updatePlayerLastSeen(playerId: string): Promise<void> {
+    const supabase = this.getClient();
+    await supabase
+      .from('players')
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq('id', playerId);
+  }
+}

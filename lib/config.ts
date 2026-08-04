@@ -1,0 +1,13 @@
+export const PARTY_CODE_LENGTH = 5;
+export const PARTY_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I, O, 0, 1
+export const MIN_PLAYERS = 3;
+export const MAX_PLAYERS = 30;
+export const MIN_NAME_LENGTH = 1;
+export const MAX_NAME_LENGTH = 16;
+export const TOTAL_ROUNDS = 2;
+export const MAX_MESSAGE_LENGTH = 140;
+export const ROUND_SECONDS = 90;
+export const VOTE_SECONDS = 60;
+export const DISCONNECT_GRACE_SECONDS = 45;
+export const ROOM_TTL_HOURS = 12;
+export const IMPOSTER_COUNT = 1;
