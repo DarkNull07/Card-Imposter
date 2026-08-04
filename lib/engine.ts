@@ -22,6 +22,11 @@ export function advanceIfExpired(
   votes: DbVote[],
   now: Date = new Date()
 ): EngineResult {
+  // Only advance active phases (round or voting)
+  if (room.phase !== 'round' && room.phase !== 'voting') {
+    return { room, players, messages, votes };
+  }
+
   if (!room.phase_ends_at) {
     return { room, players, messages, votes };
   }
@@ -67,6 +72,7 @@ export function advanceIfExpired(
     }
     nextRoom.version += 1;
     nextRoom.last_activity_at = now.toISOString();
+    return { room: nextRoom, players, messages: nextMessages, votes: nextVotes };
   } else if (room.phase === 'voting') {
     const currentMatchVotes = nextVotes.filter((v) => v.match_number === room.match_number);
 
@@ -79,7 +85,7 @@ export function advanceIfExpired(
           room_id: room.id,
           match_number: room.match_number,
           voter_id: player.id,
-          target_id: null, // abstain
+          target_id: null,
           created_at: now.toISOString(),
         });
       }

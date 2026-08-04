@@ -22,6 +22,7 @@ export function usePoll(
   const [clockOffsetMs, setClockOffsetMs] = useState<number>(0);
 
   const versionRef = useRef<number | null>(null);
+  const phaseRef = useRef<string | null>(null);
   const consecutiveFailuresRef = useRef<number>(0);
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -64,6 +65,7 @@ export function usePoll(
       }
 
       versionRef.current = newState.version;
+      phaseRef.current = newState.phase;
       setState(newState);
       setError(null);
 
@@ -82,7 +84,7 @@ export function usePoll(
     }
   }, [code, playerToken, enabled]);
 
-  // Main polling effect
+  // Main polling effect - phaseRef preserves phase without adding state to dependency array
   useEffect(() => {
     if (!code || !playerToken || !enabled) return;
 
@@ -95,9 +97,10 @@ export function usePoll(
 
       if (!isMounted) return;
 
-      // Issue 5c: Adjust poll interval based on phase (1500ms in lobby/reveal/ended, 1000ms in round/voting)
+      // Adjust poll interval based on phase in phaseRef (1500ms in lobby/reveal/ended, 1000ms in active round/voting)
       let baseDelayMs = 1000;
-      if (state && (state.phase === 'lobby' || state.phase === 'reveal' || state.phase === 'ended')) {
+      const currentPhase = phaseRef.current;
+      if (currentPhase === 'lobby' || currentPhase === 'reveal' || currentPhase === 'ended') {
         baseDelayMs = 1500;
       }
       let delayMs = baseDelayMs;

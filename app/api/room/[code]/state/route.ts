@@ -1,4 +1,4 @@
-import { extractPlayerToken, formatError } from '@/lib/api';
+import { extractPlayerToken, jsonError, jsonStateResponse } from '@/lib/api';
 import { advanceIfExpired } from '@/lib/engine';
 import { hashToken } from '@/lib/hash';
 import { buildClientState } from '@/lib/redact';
@@ -20,34 +20,35 @@ export async function GET(
   try {
     const token = extractPlayerToken(req);
     if (!token) {
-      return NextResponse.json(formatError('MISSING_TOKEN', 'Player token header required'), {
-        status: 403,
-        headers: NO_CACHE_HEADERS,
-      });
+      return jsonError('NOT_A_PLAYER', 'Player token header required');
     }
 
     const code = params.code.toUpperCase();
     const searchParams = req.nextUrl.searchParams;
     const sinceParam = searchParams.get('since');
     const sinceVersion = sinceParam !== null ? parseInt(sinceParam, 10) : null;
+    const tokenHash = hashToken(token);
 
     const store = getStore();
 
-    // Issue 5b: Lightweight version check before fetching full snapshot
+    // Fast path: cheap room version & player membership query
     if (sinceVersion !== null && !isNaN(sinceVersion)) {
-      const roomVer = await store.getRoomVersion(code);
-      if (!roomVer) {
-        return NextResponse.json(formatError('ROOM_NOT_FOUND', 'Room does not exist'), {
-          status: 404,
-          headers: NO_CACHE_HEADERS,
-        });
+      const meta = await store.getRoomVersionAndPlayer(code, tokenHash);
+
+      if (!meta || !meta.roomExists) {
+        return jsonError('ROOM_NOT_FOUND', 'Room does not exist');
+      }
+
+      if (!meta.isMember) {
+        return jsonError('NOT_A_PLAYER', 'You are not in this room');
       }
 
       const isTimerExpired =
-        roomVer.phase_ends_at !== null &&
-        new Date(roomVer.phase_ends_at).getTime() <= Date.now();
+        (meta.phase === 'round' || meta.phase === 'voting') &&
+        meta.phase_ends_at !== null &&
+        new Date(meta.phase_ends_at).getTime() <= Date.now();
 
-      if (!isTimerExpired && roomVer.version === sinceVersion) {
+      if (!isTimerExpired && meta.version === sinceVersion) {
         return new NextResponse(null, {
           status: 204,
           headers: NO_CACHE_HEADERS,
@@ -55,31 +56,25 @@ export async function GET(
       }
     }
 
-    // Fetch full room snapshot
+    // Full path: fetch room snapshot
     let snapshot = await store.getRoomByCode(code);
 
     if (!snapshot) {
-      return NextResponse.json(formatError('ROOM_NOT_FOUND', 'Room does not exist'), {
-        status: 404,
-        headers: NO_CACHE_HEADERS,
-      });
+      return jsonError('ROOM_NOT_FOUND', 'Room does not exist');
     }
 
-    const tokenHash = hashToken(token);
     const requestingPlayer = snapshot.players.find((p) => p.token_hash === tokenHash);
 
     if (!requestingPlayer) {
-      return NextResponse.json(formatError('NOT_A_PLAYER', 'You are not in this room'), {
-        status: 403,
-        headers: NO_CACHE_HEADERS,
-      });
+      return jsonError('NOT_A_PLAYER', 'You are not in this room');
     }
 
     // Update presence (throttled to 10s)
     await store.updatePlayerLastSeen(requestingPlayer.id);
 
-    // Issue 1: Restore timer engine (advanceIfExpired) in state route handler
+    // Timer engine: only advance active phases (round or voting) when timer is expired
     const isTimerExpired =
+      (snapshot.room.phase === 'round' || snapshot.room.phase === 'voting') &&
       snapshot.room.phase_ends_at !== null &&
       new Date(snapshot.room.phase_ends_at).getTime() <= Date.now();
 
@@ -107,14 +102,8 @@ export async function GET(
       requestingPlayer.id
     );
 
-    return NextResponse.json({ state: clientState }, {
-      status: 200,
-      headers: NO_CACHE_HEADERS,
-    });
+    return jsonStateResponse({ state: clientState });
   } catch (err: any) {
-    return NextResponse.json(formatError('INTERNAL_ERROR', err.message || 'Internal server error'), {
-      status: 500,
-      headers: NO_CACHE_HEADERS,
-    });
+    return jsonError('INTERNAL', err.message || 'Internal server error');
   }
 }

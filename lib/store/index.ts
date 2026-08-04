@@ -12,7 +12,16 @@ export interface RoomSnapshot {
 export interface Store {
   createRoom(code: string, leaderTokenHash: string, leaderName: string): Promise<{ room: DbRoom; player: DbPlayer }>;
   getRoomByCode(code: string): Promise<RoomSnapshot | null>;
-  getRoomVersion(code: string): Promise<{ version: number; phase_ends_at: string | null; id: string } | null>;
+  getRoomVersionAndPlayer(
+    code: string,
+    tokenHash: string
+  ): Promise<{
+    roomExists: boolean;
+    isMember: boolean;
+    version: number;
+    phase_ends_at: string | null;
+    phase: string;
+  } | null>;
   joinRoom(code: string, tokenHash: string, name: string): Promise<{ room: DbRoom; player: DbPlayer }>;
   mutateRoom(
     code: string,

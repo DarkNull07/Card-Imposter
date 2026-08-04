@@ -22,7 +22,6 @@ export const HTTP_STATUS_MAP: Record<string, number> = {
 };
 
 export function extractPlayerToken(req: NextRequest): string | null {
-  // Extract strictly from x-player-token header for normal routes
   const headerToken = req.headers.get('x-player-token');
   if (headerToken) return headerToken.trim();
   return null;
@@ -33,7 +32,7 @@ export function jsonError(errorCode: string, customMessage?: string, retryAfterS
   const message = customMessage || ERROR_MESSAGES[errorCode] || 'An unexpected error occurred.';
 
   const headers: Record<string, string> = {
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
   };
 
   if (errorCode === 'RATE_LIMITED' && retryAfterSeconds) {
@@ -50,7 +49,7 @@ export function jsonStateResponse(statePayload: any): NextResponse {
   return NextResponse.json(statePayload, {
     status: 200,
     headers: {
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
     },
   });
 }

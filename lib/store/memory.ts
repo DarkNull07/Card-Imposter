@@ -27,11 +27,30 @@ export class MemoryStore implements Store {
     this.votes.clear();
   }
 
-  async getRoomVersion(code: string): Promise<{ version: number; phase_ends_at: string | null; id: string } | null> {
+  async getRoomVersionAndPlayer(
+    code: string,
+    tokenHash: string
+  ): Promise<{
+    roomExists: boolean;
+    isMember: boolean;
+    version: number;
+    phase_ends_at: string | null;
+    phase: string;
+  } | null> {
     const uppercaseCode = code.toUpperCase();
     const room = Array.from(this.rooms.values()).find((r) => r.code === uppercaseCode);
     if (!room) return null;
-    return { id: room.id, version: room.version, phase_ends_at: room.phase_ends_at };
+
+    const players = this.players.get(room.id) || [];
+    const isMember = players.some((p) => p.token_hash === tokenHash);
+
+    return {
+      roomExists: true,
+      isMember,
+      version: room.version,
+      phase_ends_at: room.phase_ends_at,
+      phase: room.phase,
+    };
   }
 
   async getRoomByCode(code: string): Promise<RoomSnapshot | null> {
@@ -216,6 +235,22 @@ export class MemoryStore implements Store {
 
       const initialVersion = snapshot.room.version;
       const result = mutationFn(snapshot, actingPlayer);
+
+      // Skip store update and version bump when mutation result is unchanged
+      const isUnchanged =
+        result.room.phase === snapshot.room.phase &&
+        result.room.round_number === snapshot.room.round_number &&
+        result.room.phase_ends_at === snapshot.room.phase_ends_at &&
+        result.room.version === snapshot.room.version &&
+        result.room.eliminated_player_id === snapshot.room.eliminated_player_id &&
+        result.room.outcome === snapshot.room.outcome &&
+        result.players.length === snapshot.players.length &&
+        result.messages.length === snapshot.messages.length &&
+        result.votes.length === snapshot.votes.length;
+
+      if (isUnchanged) {
+        return { snapshot, actingPlayer };
+      }
 
       const currentRoom = this.rooms.get(snapshot.room.id);
       if (!currentRoom || currentRoom.version !== initialVersion) {

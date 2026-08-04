@@ -24,18 +24,41 @@ export class SupabaseStore implements Store {
     return this.client;
   }
 
-  async getRoomVersion(code: string): Promise<{ version: number; phase_ends_at: string | null; id: string } | null> {
+  async getRoomVersionAndPlayer(
+    code: string,
+    tokenHash: string
+  ): Promise<{
+    roomExists: boolean;
+    isMember: boolean;
+    version: number;
+    phase_ends_at: string | null;
+    phase: string;
+  } | null> {
     const supabase = this.getClient();
     const uppercaseCode = code.toUpperCase();
 
-    const { data: room, error } = await supabase
+    const { data: room } = await supabase
       .from('rooms')
-      .select('id, version, phase_ends_at')
+      .select('id, version, phase_ends_at, phase')
       .eq('code', uppercaseCode)
       .single();
 
-    if (error || !room) return null;
-    return room as { id: string; version: number; phase_ends_at: string | null };
+    if (!room) return null;
+
+    const { data: player } = await supabase
+      .from('players')
+      .select('id')
+      .eq('room_id', room.id)
+      .eq('token_hash', tokenHash)
+      .single();
+
+    return {
+      roomExists: true,
+      isMember: !!player,
+      version: room.version,
+      phase_ends_at: room.phase_ends_at,
+      phase: room.phase,
+    };
   }
 
   async getRoomByCode(code: string): Promise<RoomSnapshot | null> {
@@ -239,6 +262,22 @@ export class SupabaseStore implements Store {
 
       const initialVersion = snapshot.room.version;
       const result = mutationFn(snapshot, actingPlayer);
+
+      // Skip database write and version bump when mutation result is unchanged
+      const isUnchanged =
+        result.room.phase === snapshot.room.phase &&
+        result.room.round_number === snapshot.room.round_number &&
+        result.room.phase_ends_at === snapshot.room.phase_ends_at &&
+        result.room.version === snapshot.room.version &&
+        result.room.eliminated_player_id === snapshot.room.eliminated_player_id &&
+        result.room.outcome === snapshot.room.outcome &&
+        result.players.length === snapshot.players.length &&
+        result.messages.length === snapshot.messages.length &&
+        result.votes.length === snapshot.votes.length;
+
+      if (isUnchanged) {
+        return { snapshot, actingPlayer };
+      }
 
       const nextVersion = result.room.version > initialVersion ? result.room.version : initialVersion + 1;
       const updatedRoomObj = {
