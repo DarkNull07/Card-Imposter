@@ -90,7 +90,7 @@ describe('Store Interface Parity & Mutation Tests', () => {
       const msg: DbMessage = {
         id: 'm1',
         room_id: snap.room.id,
-        match_number: 1,
+        match_number: snap.room.match_number,
         round_number: 1,
         player_id: snap.players[0].id,
         body: 'Hint 1',
@@ -99,7 +99,7 @@ describe('Store Interface Parity & Mutation Tests', () => {
       const vote: DbVote = {
         id: 'v1',
         room_id: snap.room.id,
-        match_number: 1,
+        match_number: snap.room.match_number,
         voter_id: snap.players[0].id,
         target_id: snap.players[1].id,
         created_at: new Date().toISOString(),
