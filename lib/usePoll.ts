@@ -89,11 +89,24 @@ export function usePoll(
     if (!code || !playerToken || !enabled) return;
 
     let isMounted = true;
+    const isPollingRef = { current: false };
 
     const runPollLoop = async () => {
-      if (document.hidden) return;
+      if (!isMounted) return;
 
-      await fetchState();
+      if (document.hidden) {
+        pollTimerRef.current = setTimeout(runPollLoop, 5000);
+        return;
+      }
+
+      if (isPollingRef.current) return;
+      isPollingRef.current = true;
+
+      try {
+        await fetchState();
+      } finally {
+        isPollingRef.current = false;
+      }
 
       if (!isMounted) return;
 
@@ -116,7 +129,9 @@ export function usePoll(
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
-        runPollLoop();
+        if (!isPollingRef.current) {
+          runPollLoop();
+        }
       }
     };
 

@@ -308,10 +308,9 @@ export class SupabaseStore implements Store {
 
       // Sync players
       const nextPlayerIds = new Set(result.players.map((p) => p.id));
-      for (const p of snapshot.players) {
-        if (!nextPlayerIds.has(p.id)) {
-          await supabase.from('players').delete().eq('id', p.id);
-        }
+      const deletedPlayerIds = snapshot.players.filter((p) => !nextPlayerIds.has(p.id)).map((p) => p.id);
+      if (deletedPlayerIds.length > 0) {
+        await supabase.from('players').delete().in('id', deletedPlayerIds);
       }
       for (const p of result.players) {
         await supabase.from('players').upsert({
@@ -328,12 +327,11 @@ export class SupabaseStore implements Store {
         });
       }
 
-      // Sync messages (Issue 4: Delete stale messages from database)
+      // Sync messages
       const nextMessageIds = new Set(result.messages.map((m) => m.id));
-      for (const m of snapshot.messages) {
-        if (!nextMessageIds.has(m.id)) {
-          await supabase.from('messages').delete().eq('id', m.id);
-        }
+      const deletedMessageIds = snapshot.messages.filter((m) => !nextMessageIds.has(m.id)).map((m) => m.id);
+      if (deletedMessageIds.length > 0) {
+        await supabase.from('messages').delete().in('id', deletedMessageIds);
       }
       for (const m of result.messages) {
         await supabase.from('messages').upsert({
@@ -347,12 +345,11 @@ export class SupabaseStore implements Store {
         });
       }
 
-      // Sync votes (Issue 4: Delete stale votes from database)
+      // Sync votes
       const nextVoteIds = new Set(result.votes.map((v) => v.id));
-      for (const v of snapshot.votes) {
-        if (!nextVoteIds.has(v.id)) {
-          await supabase.from('votes').delete().eq('id', v.id);
-        }
+      const deletedVoteIds = snapshot.votes.filter((v) => !nextVoteIds.has(v.id)).map((v) => v.id);
+      if (deletedVoteIds.length > 0) {
+        await supabase.from('votes').delete().in('id', deletedVoteIds);
       }
       for (const v of result.votes) {
         await supabase.from('votes').upsert({
@@ -378,23 +375,11 @@ export class SupabaseStore implements Store {
 
   async updatePlayerLastSeen(playerId: string): Promise<void> {
     const supabase = this.getClient();
-    // Issue 5a: Only write last_seen_at if it is > 10 seconds stale
-    const { data: player } = await supabase
-      .from('players')
-      .select('last_seen_at')
-      .eq('id', playerId)
-      .single();
-
-    if (player && player.last_seen_at) {
-      const diffMs = Date.now() - new Date(player.last_seen_at).getTime();
-      if (diffMs < 10000) {
-        return;
-      }
-    }
-
+    const cutoffIso = new Date(Date.now() - 10000).toISOString();
     await supabase
       .from('players')
       .update({ last_seen_at: new Date().toISOString() })
-      .eq('id', playerId);
+      .eq('id', playerId)
+      .lt('last_seen_at', cutoffIso);
   }
 }

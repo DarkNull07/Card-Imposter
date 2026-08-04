@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractPlayerToken, jsonError } from '@/lib/api';
+import { extractPlayerToken, handleRouteError, jsonError } from '@/lib/api';
 import { removePlayer } from '@/lib/engine';
 import { hashToken } from '@/lib/hash';
 import { checkRateLimit } from '@/lib/rateLimit';
@@ -48,9 +48,6 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (err: any) {
-    if (err.message?.startsWith('SUPABASE_ENV_MISSING')) {
-      return jsonError('INTERNAL', err.message);
-    }
-    return jsonError(err.message || 'INTERNAL');
+    return handleRouteError(err);
   }
 }

@@ -21,6 +21,17 @@ export const HTTP_STATUS_MAP: Record<string, number> = {
   INTERNAL: 500,
 };
 
+export const KNOWN_ERROR_CODES = new Set(Object.keys(HTTP_STATUS_MAP));
+
+export function handleRouteError(err: any): NextResponse {
+  const msg = err?.message || '';
+  if (KNOWN_ERROR_CODES.has(msg)) {
+    return jsonError(msg);
+  }
+  console.error('[API Route Error]', err);
+  return jsonError('INTERNAL', 'Internal server error');
+}
+
 export function extractPlayerToken(req: NextRequest): string | null {
   const headerToken = req.headers.get('x-player-token');
   if (headerToken) return headerToken.trim();

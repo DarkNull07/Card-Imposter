@@ -1,4 +1,4 @@
-import { extractPlayerToken, jsonError, jsonStateResponse } from '@/lib/api';
+import { extractPlayerToken, handleRouteError, jsonError, jsonStateResponse } from '@/lib/api';
 import { advanceIfExpired } from '@/lib/engine';
 import { hashToken } from '@/lib/hash';
 import { buildClientState } from '@/lib/redact';
@@ -104,6 +104,6 @@ export async function GET(
 
     return jsonStateResponse({ state: clientState });
   } catch (err: any) {
-    return jsonError('INTERNAL', err.message || 'Internal server error');
+    return handleRouteError(err);
   }
 }
