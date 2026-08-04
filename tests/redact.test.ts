@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildClientState } from '../lib/redact';
-import { DbPlayer, DbRoom } from '../lib/types';
+import { buildClientState } from '@/lib/redact';
+import { DbMessage, DbPlayer, DbRoom } from '@/lib/types';
 
-describe('SECRET-LEAK RULE Redaction', () => {
+describe('SECRET-LEAK RULE Redaction & Client State Formatting', () => {
   const room: DbRoom = {
     id: 'room-1',
     code: 'K7QMR',
@@ -60,25 +60,72 @@ describe('SECRET-LEAK RULE Redaction', () => {
     },
   ];
 
-  it('should NEVER include imposter_player_id, imposter_card, or token hashes in serialized JSON for crewmate during round phase', () => {
+  it('should format you.myMessageThisRound correctly (null before submitting, equals own message body after submitting)', () => {
+    // 1. Before submitting
+    const stateBefore = buildClientState(room, players, [], [], 'player-1');
+    expect(stateBefore.you.hasSubmittedThisRound).toBe(false);
+    expect(stateBefore.you.myMessageThisRound).toBeNull();
+
+    // 2. After submitting
+    const submittedMessages: DbMessage[] = [
+      {
+        id: 'msg-1',
+        room_id: 'room-1',
+        match_number: 1,
+        round_number: 1,
+        player_id: 'player-1',
+        body: 'My secret melee hint',
+        created_at: new Date().toISOString(),
+      },
+    ];
+
+    const stateAfter = buildClientState(room, players, submittedMessages, [], 'player-1');
+    expect(stateAfter.you.hasSubmittedThisRound).toBe(true);
+    expect(stateAfter.you.myMessageThisRound).toBe('My secret melee hint');
+  });
+
+  it('should sanitize client state during round phase according to secret isolation rules', () => {
     const clientState = buildClientState(room, players, [], [], 'player-1');
     const jsonString = JSON.stringify(clientState);
 
-    expect(clientState.you.card).toBe('Knight');
+    // (a) Imposter card string is absent from payload
     expect(jsonString).not.toContain('Mini P.E.K.K.A');
-    expect(jsonString).not.toContain('player-3');
-    expect(jsonString).not.toContain('secret-hash');
+
+    // (b) No secret keys appear anywhere in serialized JSON
+    expect(jsonString).not.toContain('imposterPlayerId');
+    expect(jsonString).not.toContain('imposter_card');
+    expect(jsonString).not.toContain('crew_card');
+    expect(jsonString).not.toContain('token_hash');
+
+    // (c) you.card equals requester's own card only
+    expect(clientState.you.card).toBe('Knight');
+
+    // (d) reveal is null
     expect(clientState.reveal).toBeNull();
+
+    // (e) rounds[].messages is empty while revealed is false
+    expect(clientState.rounds[0].revealed).toBe(false);
+    expect(clientState.rounds[0].messages).toEqual([]);
   });
 
-  it('should NEVER include imposter_player_id or imposter_card in serialized JSON for crewmate during voting phase', () => {
+  it('should sanitize client state during voting phase according to secret isolation rules', () => {
     const votingRoom = { ...room, phase: 'voting' as const };
     const clientState = buildClientState(votingRoom, players, [], [], 'player-1');
     const jsonString = JSON.stringify(clientState);
 
-    expect(clientState.you.card).toBe('Knight');
+    // (a) Imposter card string is absent
     expect(jsonString).not.toContain('Mini P.E.K.K.A');
-    expect(jsonString).not.toContain('player-3');
+
+    // (b) No secret keys appear anywhere
+    expect(jsonString).not.toContain('imposterPlayerId');
+    expect(jsonString).not.toContain('imposter_card');
+    expect(jsonString).not.toContain('crew_card');
+    expect(jsonString).not.toContain('token_hash');
+
+    // (c) you.card equals requester's own card
+    expect(clientState.you.card).toBe('Knight');
+
+    // (d) reveal is null
     expect(clientState.reveal).toBeNull();
   });
 

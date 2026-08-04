@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MAX_MESSAGE_LENGTH } from '../lib/config';
+import { MAX_MESSAGE_LENGTH } from '@/lib/config';
 
 interface MessageInputProps {
   onSubmit: (body: string) => void;

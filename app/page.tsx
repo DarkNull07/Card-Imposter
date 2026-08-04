@@ -1,15 +1,18 @@
 'use me';
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
-import { JoinForm } from '../components/JoinForm';
-import { NameForm } from '../components/NameForm';
-import { Toaster } from '../components/Toaster';
-import { UI_STRINGS } from '../lib/strings';
+import { JoinForm } from '@/components/JoinForm';
+import { NameForm } from '@/components/NameForm';
+import { Toaster } from '@/components/Toaster';
+import { UI_STRINGS } from '@/lib/strings';
 
 export default function HomePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryCode = searchParams.get('code') || '';
+
   const [token, setToken] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string>('');
   const [lastCode, setLastCode] = useState<string>('');
@@ -28,9 +31,9 @@ export default function HomePage() {
     const storedName = localStorage.getItem('cardimposter.displayName');
     if (storedName) setDisplayName(storedName);
 
-    const storedCode = localStorage.getItem('cardimposter.lastCode');
+    const storedCode = queryCode.toUpperCase() || localStorage.getItem('cardimposter.lastCode') || '';
     if (storedCode) setLastCode(storedCode);
-  }, []);
+  }, [queryCode]);
 
   const handleCreateParty = async (name: string) => {
     if (!token) return;

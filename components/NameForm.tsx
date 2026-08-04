@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MAX_NAME_LENGTH, MIN_NAME_LENGTH } from '../lib/config';
+import { MAX_NAME_LENGTH, MIN_NAME_LENGTH } from '@/lib/config';
 
 interface NameFormProps {
   initialName?: string;

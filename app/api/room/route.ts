@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractPlayerToken, jsonError } from '../../../lib/api';
-import { hashToken } from '../../../lib/hash';
-import { generatePartyCode } from '../../../lib/ids';
-import { buildClientState } from '../../../lib/redact';
-import { checkRateLimit } from '../../../lib/rateLimit';
-import { getStore } from '../../../lib/store';
-import { createRoomSchema } from '../../../lib/validation';
+import { extractPlayerToken, jsonError } from '@/lib/api';
+import { hashToken } from '@/lib/hash';
+import { generatePartyCode } from '@/lib/ids';
+import { buildClientState } from '@/lib/redact';
+import { checkRateLimit } from '@/lib/rateLimit';
+import { getStore } from '@/lib/store';
+import { createRoomSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

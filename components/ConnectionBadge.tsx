@@ -1,5 +1,5 @@
 import React from 'react';
-import { ConnectionStatus } from '../lib/usePoll';
+import { ConnectionStatus } from '@/lib/usePoll';
 
 interface ConnectionBadgeProps {
   status: ConnectionStatus;

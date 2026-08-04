@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { MemoryStore } from '../lib/store/memory';
-import { submitMessage } from '../lib/engine';
+import { MemoryStore } from '@/lib/store/memory';
+import { submitMessage } from '@/lib/engine';
+import { CARD_PAIRS } from '@/lib/cards';
 
 describe('Optimistic Locking Concurrency', () => {
   it('should handle simultaneous mutations with retries and persist both messages', async () => {
@@ -13,7 +14,6 @@ describe('Optimistic Locking Concurrency', () => {
 
     // Start match
     await store.mutateRoom('K7QMR', 'hash-1', (snap) => {
-      const { CARD_PAIRS } = require('../lib/cards');
       return {
         room: {
           ...snap.room,

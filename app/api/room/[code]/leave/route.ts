@@ -1,18 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractPlayerToken, jsonError } from '../../../../lib/api';
-import { removePlayer } from '../../../../lib/engine';
-import { hashToken } from '../../../../lib/hash';
-import { checkRateLimit } from '../../../../lib/rateLimit';
-import { getStore } from '../../../../lib/store';
+import { extractPlayerToken, jsonError } from '@/lib/api';
+import { removePlayer } from '@/lib/engine';
+import { hashToken } from '@/lib/hash';
+import { checkRateLimit } from '@/lib/rateLimit';
+import { getStore } from '@/lib/store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest, { params }: { params: { code: string } }) {
   try {
-    const token = extractPlayerToken(req);
+    let token = extractPlayerToken(req);
+
+    // Fallback for sendBeacon: check query param ?token= or body { token }
     if (!token) {
-      return jsonError('BAD_REQUEST', 'Missing x-player-token header');
+      token = req.nextUrl.searchParams.get('token');
+    }
+    if (!token) {
+      const body = await req.json().catch(() => ({}));
+      if (body && typeof body.token === 'string') {
+        token = body.token.trim();
+      }
+    }
+
+    if (!token) {
+      return jsonError('BAD_REQUEST', 'Missing player token');
     }
 
     const rateCheck = checkRateLimit(token, 'mutate');

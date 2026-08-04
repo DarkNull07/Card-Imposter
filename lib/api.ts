@@ -22,14 +22,9 @@ export const HTTP_STATUS_MAP: Record<string, number> = {
 };
 
 export function extractPlayerToken(req: NextRequest): string | null {
-  // 1. Check header
+  // Extract strictly from x-player-token header for normal routes
   const headerToken = req.headers.get('x-player-token');
   if (headerToken) return headerToken.trim();
-
-  // 2. Check query param (for navigator.sendBeacon fallback)
-  const queryToken = req.nextUrl.searchParams.get('token');
-  if (queryToken) return queryToken.trim();
-
   return null;
 }
 

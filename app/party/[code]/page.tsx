@@ -3,13 +3,13 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
-import { ConnectionBadge } from '../../../components/ConnectionBadge';
-import { Lobby } from '../../../components/Lobby';
-import { RevealPanel } from '../../../components/RevealPanel';
-import { RoundPanel } from '../../../components/RoundPanel';
-import { Toaster } from '../../../components/Toaster';
-import { VotePanel } from '../../../components/VotePanel';
-import { usePoll } from '../../../lib/usePoll';
+import { ConnectionBadge } from '@/components/ConnectionBadge';
+import { Lobby } from '@/components/Lobby';
+import { RevealPanel } from '@/components/RevealPanel';
+import { RoundPanel } from '@/components/RoundPanel';
+import { Toaster } from '@/components/Toaster';
+import { VotePanel } from '@/components/VotePanel';
+import { usePoll } from '@/lib/usePoll';
 
 export default function PartyPage() {
   const params = useParams();
@@ -82,9 +82,10 @@ export default function PartyPage() {
     if (!code || !playerToken) return;
 
     const handlePageHide = () => {
-      const url = `/api/room/${code}/leave?token=${encodeURIComponent(playerToken)}`;
+      const url = `/api/room/${code}/leave`;
       try {
-        navigator.sendBeacon(url);
+        const blob = new Blob([JSON.stringify({ token: playerToken })], { type: 'application/json' });
+        navigator.sendBeacon(url, blob);
       } catch {
         // Fallback
       }
@@ -111,7 +112,7 @@ export default function PartyPage() {
       await refreshState();
     } catch (err: any) {
       setToastError(err.message || 'Failed to start game');
-    } fontFinally: {
+    } finally {
       setActionLoading(false);
     }
   };

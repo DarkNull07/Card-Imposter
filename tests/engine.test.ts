@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   advanceIfExpired,
-  castVote,
   playAgain,
   removePlayer,
   resolveVoting,
   startMatch,
   submitMessage,
-} from '../lib/engine';
-import { DbMessage, DbPlayer, DbRoom, DbVote } from '../lib/types';
+} from '@/lib/engine';
+import { DbMessage, DbPlayer, DbRoom, DbVote } from '@/lib/types';
 
 function createMockRoom(overrides?: Partial<DbRoom>): DbRoom {
   return {
@@ -126,7 +125,68 @@ describe('Game Engine - Pure Functions', () => {
     expect(expired.room.round_number).toBe(2);
   });
 
-  it('should resolve voting with plurality elimination and score crewmates on crew win', () => {
+  // --- SPECIFIC TIE & VOTE RESOLUTION CASES ---
+
+  it('(a) 4 players, 2-2 vote split -> eliminated_player_id is null, outcome is imposter, imposter gets +3', () => {
+    const room = createMockRoom({
+      phase: 'voting',
+      match_number: 1,
+      imposter_player_id: 'player-4',
+      crew_card: 'Knight',
+      imposter_card: 'Mini P.E.K.K.A',
+    });
+    const players = createMockPlayers(4);
+    // Player 1 & 2 vote for Player 3; Player 3 & 4 vote for Player 1 (2-2 split)
+    const votes: DbVote[] = [
+      { id: 'v1', room_id: 'room-1', match_number: 1, voter_id: 'player-1', target_id: 'player-3', created_at: '' },
+      { id: 'v2', room_id: 'room-1', match_number: 1, voter_id: 'player-2', target_id: 'player-3', created_at: '' },
+      { id: 'v3', room_id: 'room-1', match_number: 1, voter_id: 'player-3', target_id: 'player-1', created_at: '' },
+      { id: 'v4', room_id: 'room-1', match_number: 1, voter_id: 'player-4', target_id: 'player-1', created_at: '' },
+    ];
+
+    const result = resolveVoting(room, players, votes);
+
+    expect(result.room.phase).toBe('reveal');
+    expect(result.room.eliminated_player_id).toBeNull(); // Tied vote -> nobody eliminated
+    expect(result.room.outcome).toBe('imposter');
+
+    // Imposter (player-4) gets +3 points; crewmates get 0
+    expect(result.players.find((p) => p.id === 'player-4')?.score).toBe(3);
+    expect(result.players.find((p) => p.id === 'player-1')?.score).toBe(0);
+    expect(result.players.find((p) => p.id === 'player-2')?.score).toBe(0);
+    expect(result.players.find((p) => p.id === 'player-3')?.score).toBe(0);
+  });
+
+  it('(b) 4 players, 2-1-1 vote split -> 2-vote player is eliminated, outcome correct', () => {
+    const room = createMockRoom({
+      phase: 'voting',
+      match_number: 1,
+      imposter_player_id: 'player-2',
+      crew_card: 'Knight',
+      imposter_card: 'Mini P.E.K.K.A',
+    });
+    const players = createMockPlayers(4);
+    // Player 1 & 3 vote for Player 2 (2 votes); Player 2 votes for 1 (1 vote); Player 4 votes for 3 (1 vote)
+    const votes: DbVote[] = [
+      { id: 'v1', room_id: 'room-1', match_number: 1, voter_id: 'player-1', target_id: 'player-2', created_at: '' },
+      { id: 'v2', room_id: 'room-1', match_number: 1, voter_id: 'player-2', target_id: 'player-1', created_at: '' },
+      { id: 'v3', room_id: 'room-1', match_number: 1, voter_id: 'player-3', target_id: 'player-2', created_at: '' },
+      { id: 'v4', room_id: 'room-1', match_number: 1, voter_id: 'player-4', target_id: 'player-3', created_at: '' },
+    ];
+
+    const result = resolveVoting(room, players, votes);
+
+    expect(result.room.phase).toBe('reveal');
+    expect(result.room.eliminated_player_id).toBe('player-2'); // Player 2 had 2 votes -> eliminated!
+    expect(result.room.outcome).toBe('crew'); // Imposter was player-2 -> crew win!
+
+    expect(result.players.find((p) => p.id === 'player-1')?.score).toBe(1);
+    expect(result.players.find((p) => p.id === 'player-3')?.score).toBe(1);
+    expect(result.players.find((p) => p.id === 'player-4')?.score).toBe(1);
+    expect(result.players.find((p) => p.id === 'player-2')?.score).toBe(0);
+  });
+
+  it('(c) All players abstain via timer expiry -> nobody eliminated, imposter wins', () => {
     const room = createMockRoom({
       phase: 'voting',
       match_number: 1,
@@ -135,6 +195,31 @@ describe('Game Engine - Pure Functions', () => {
       imposter_card: 'Mini P.E.K.K.A',
     });
     const players = createMockPlayers(3);
+    // All 3 players abstain (target_id = null)
+    const votes: DbVote[] = [
+      { id: 'v1', room_id: 'room-1', match_number: 1, voter_id: 'player-1', target_id: null, created_at: '' },
+      { id: 'v2', room_id: 'room-1', match_number: 1, voter_id: 'player-2', target_id: null, created_at: '' },
+      { id: 'v3', room_id: 'room-1', match_number: 1, voter_id: 'player-3', target_id: null, created_at: '' },
+    ];
+
+    const result = resolveVoting(room, players, votes);
+
+    expect(result.room.phase).toBe('reveal');
+    expect(result.room.eliminated_player_id).toBeNull(); // Nobody eliminated
+    expect(result.room.outcome).toBe('imposter');
+    expect(result.players.find((p) => p.id === 'player-3')?.score).toBe(3);
+  });
+
+  it('(d) 3 players, 2-1 split where imposter gets 2 votes -> imposter eliminated, outcome is crew, crewmates +1', () => {
+    const room = createMockRoom({
+      phase: 'voting',
+      match_number: 1,
+      imposter_player_id: 'player-3',
+      crew_card: 'Knight',
+      imposter_card: 'Mini P.E.K.K.A',
+    });
+    const players = createMockPlayers(3);
+    // Player 1 & 2 vote for Player 3 (imposter); Player 3 votes for Player 1
     const votes: DbVote[] = [
       { id: 'v1', room_id: 'room-1', match_number: 1, voter_id: 'player-1', target_id: 'player-3', created_at: '' },
       { id: 'v2', room_id: 'room-1', match_number: 1, voter_id: 'player-2', target_id: 'player-3', created_at: '' },
@@ -147,36 +232,9 @@ describe('Game Engine - Pure Functions', () => {
     expect(result.room.eliminated_player_id).toBe('player-3');
     expect(result.room.outcome).toBe('crew');
 
-    // Crewmates (player 1 and 2) get +1 point, imposter (player 3) gets 0
     expect(result.players.find((p) => p.id === 'player-1')?.score).toBe(1);
     expect(result.players.find((p) => p.id === 'player-2')?.score).toBe(1);
     expect(result.players.find((p) => p.id === 'player-3')?.score).toBe(0);
-  });
-
-  it('should treat tie votes as no elimination and grant imposter +3 points', () => {
-    const room = createMockRoom({
-      phase: 'voting',
-      match_number: 1,
-      imposter_player_id: 'player-3',
-      crew_card: 'Knight',
-      imposter_card: 'Mini P.E.K.K.A',
-    });
-    const players = createMockPlayers(3);
-    const votes: DbVote[] = [
-      { id: 'v1', room_id: 'room-1', match_number: 1, voter_id: 'player-1', target_id: 'player-2', created_at: '' },
-      { id: 'v2', room_id: 'room-1', match_number: 1, voter_id: 'player-2', target_id: 'player-1', created_at: '' },
-      { id: 'v3', room_id: 'room-1', match_number: 1, voter_id: 'player-3', target_id: 'player-1', created_at: '' },
-    ];
-
-    const result = resolveVoting(room, players, votes);
-
-    expect(result.room.phase).toBe('reveal');
-    expect(result.room.eliminated_player_id).toBeNull(); // tie!
-    expect(result.room.outcome).toBe('imposter');
-
-    // Imposter gets +3 points
-    expect(result.players.find((p) => p.id === 'player-3')?.score).toBe(3);
-    expect(result.players.find((p) => p.id === 'player-1')?.score).toBe(0);
   });
 
   it('should transfer leadership to earliest joined connected player when leader leaves', () => {

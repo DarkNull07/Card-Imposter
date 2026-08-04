@@ -1,5 +1,5 @@
 import React from 'react';
-import { PlayerState, RevealState } from '../lib/types';
+import { PlayerState, RevealState } from '@/lib/types';
 import { Scoreboard } from './Scoreboard';
 
 interface RevealPanelProps {

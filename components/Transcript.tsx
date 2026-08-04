@@ -1,5 +1,5 @@
 import React from 'react';
-import { RoundState } from '../lib/types';
+import { RoundState } from '@/lib/types';
 
 interface TranscriptProps {
   rounds: RoundState[];

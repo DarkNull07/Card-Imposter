@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PARTY_CODE_ALPHABET, PARTY_CODE_LENGTH } from '../lib/config';
+import { PARTY_CODE_ALPHABET, PARTY_CODE_LENGTH } from '@/lib/config';
 
 interface JoinFormProps {
   initialCode?: string;

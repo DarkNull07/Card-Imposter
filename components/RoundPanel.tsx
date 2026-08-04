@@ -1,5 +1,5 @@
 import React from 'react';
-import { PlayerState, RoundState } from '../lib/types';
+import { PlayerState, RoundState } from '@/lib/types';
 import { CardReveal } from './CardReveal';
 import { Countdown } from './Countdown';
 import { MessageInput } from './MessageInput';
@@ -36,7 +36,7 @@ export const RoundPanel: React.FC<RoundPanelProps> = ({
   disabled = false,
   loading = false,
 }) => {
-  const activeAlivePlayers = players.filter((p) => !p.is_spectator && !p.is_eliminated);
+  const activeAlivePlayers = players.filter((p) => !p.isSpectator && !p.isEliminated);
 
   return (
     <div className="w-full flex flex-col gap-6">

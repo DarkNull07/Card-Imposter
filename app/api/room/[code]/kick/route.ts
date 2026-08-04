@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractPlayerToken, jsonError } from '../../../../lib/api';
-import { removePlayer } from '../../../../lib/engine';
-import { hashToken } from '../../../../lib/hash';
-import { buildClientState } from '../../../../lib/redact';
-import { checkRateLimit } from '../../../../lib/rateLimit';
-import { getStore } from '../../../../lib/store';
-import { kickPlayerSchema } from '../../../../lib/validation';
+import { extractPlayerToken, jsonError } from '@/lib/api';
+import { removePlayer } from '@/lib/engine';
+import { hashToken } from '@/lib/hash';
+import { buildClientState } from '@/lib/redact';
+import { checkRateLimit } from '@/lib/rateLimit';
+import { getStore } from '@/lib/store';
+import { kickPlayerSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

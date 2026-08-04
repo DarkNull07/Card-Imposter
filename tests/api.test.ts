@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MemoryStore } from '../lib/store/memory';
-import { POST as createRoomPost } from '../app/api/room/route';
-import { POST as joinRoomPost } from '../app/api/room/[code]/join/route';
-import { GET as stateGet } from '../app/api/room/[code]/state/route';
-import { POST as startPost } from '../app/api/room/[code]/start/route';
-import { POST as messagePost } from '../app/api/room/[code]/message/route';
-import { POST as votePost } from '../app/api/room/[code]/vote/route';
-import { POST as againPost } from '../app/api/room/[code]/again/route';
-import { POST as endPost } from '../app/api/room/[code]/end/route';
-import { POST as leavePost } from '../app/api/room/[code]/leave/route';
+import { MemoryStore } from '@/lib/store/memory';
+import { POST as createRoomPost } from '@/app/api/room/route';
+import { POST as joinRoomPost } from '@/app/api/room/[code]/join/route';
+import { GET as stateGet } from '@/app/api/room/[code]/state/route';
+import { POST as startPost } from '@/app/api/room/[code]/start/route';
+import { POST as messagePost } from '@/app/api/room/[code]/message/route';
+import { POST as votePost } from '@/app/api/room/[code]/vote/route';
+import { POST as againPost } from '@/app/api/room/[code]/again/route';
+import { POST as endPost } from '@/app/api/room/[code]/end/route';
+import { POST as leavePost } from '@/app/api/room/[code]/leave/route';
 import { NextRequest } from 'next/server';
 
 process.env.STORAGE_DRIVER = 'memory';
@@ -66,7 +66,7 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(jsonStart.state.phase).toBe('round');
     expect(jsonStart.state.roundNumber).toBe(1);
 
-    // 5. Non-leader start attempt fails with NOT_LEADER
+    // 5. Non-leader start attempt fails with NOT_LEADER (403)
     const reqStartBad = createRequest(`/api/room/${code}/start`, 'POST', token2, {});
     const resStartBad = await startPost(reqStartBad, { params: { code } });
     expect(resStartBad.status).toBe(403);

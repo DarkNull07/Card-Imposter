@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { MIN_PLAYERS } from '../lib/config';
-import { PlayerState } from '../lib/types';
+import { MIN_PLAYERS } from '@/lib/config';
+import { PlayerState } from '@/lib/types';
 import { PlayerList } from './PlayerList';
 import { RulesDialog } from './RulesDialog';
 import { Scoreboard } from './Scoreboard';
@@ -31,7 +31,7 @@ export const Lobby: React.FC<LobbyProps> = ({
   const [copied, setCopied] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
 
-  const activePlayersCount = players.filter((p) => !p.is_spectator).length;
+  const activePlayersCount = players.filter((p) => !p.isSpectator).length;
   const canStart = isLeader && activePlayersCount >= MIN_PLAYERS;
 
   const handleCopyLink = async () => {

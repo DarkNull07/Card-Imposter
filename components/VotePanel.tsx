@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PlayerState, RoundState, VotingState } from '../lib/types';
+import { PlayerState, RoundState, VotingState } from '@/lib/types';
 import { Transcript } from './Transcript';
 
 interface VotePanelProps {
@@ -25,7 +25,7 @@ export const VotePanel: React.FC<VotePanelProps> = ({
 }) => {
   const [selectedCandidate, setSelectedCandidate] = useState<PlayerState | null>(null);
 
-  const activeCandidates = players.filter((p) => !p.is_spectator && !p.is_eliminated);
+  const activeCandidates = players.filter((p) => !p.isSpectator && !p.isEliminated);
 
   const handleConfirmVote = () => {
     if (selectedCandidate) {
