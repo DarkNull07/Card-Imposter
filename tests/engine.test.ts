@@ -257,6 +257,8 @@ describe('Game Engine - Pure Functions', () => {
 
     expect(result.room.phase).toBe('lobby');
     expect(result.players.every((p) => !p.is_spectator)).toBe(true);
+    expect(result.messages).toEqual([]);
+    expect(result.votes).toEqual([]);
   });
 
   it('should immediately advance phase if departure leaves remaining players with all submissions complete', () => {

@@ -351,7 +351,7 @@ export function playAgain(
   room: DbRoom,
   players: DbPlayer[],
   now: Date = new Date()
-): { room: DbRoom; players: DbPlayer[] } {
+): EngineResult {
   if (room.phase !== 'reveal') {
     throw new Error('WRONG_PHASE');
   }
@@ -377,7 +377,7 @@ export function playAgain(
     last_activity_at: now.toISOString(),
   };
 
-  return { room: nextRoom, players: nextPlayers };
+  return { room: nextRoom, players: nextPlayers, messages: [], votes: [] };
 }
 
 export function removePlayer(
@@ -395,6 +395,7 @@ export function removePlayer(
       room: {
         ...room,
         phase: 'ended',
+        phase_ends_at: null,
         version: room.version + 1,
         last_activity_at: now.toISOString(),
       },

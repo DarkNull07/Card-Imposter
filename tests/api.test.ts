@@ -102,7 +102,8 @@ describe('API Route Handlers - Integration Tests', () => {
     const jsonVoteLast = await expectStatus(await votePost(createRequest(`/api/room/${code}/vote`, 'POST', token3, { targetPlayerId: p2Id }), { params: { code } }), 200);
 
     expect(jsonVoteLast.state.phase).toBe('reveal');
-    expect(jsonVoteLast.state.reveal.eliminatedPlayerId).toBe(p3Id);
+    expect(jsonVoteLast.state.reveal).not.toBeNull();
+    expect(jsonVoteLast.state.reveal!.eliminatedPlayerId).toBe(p3Id);
 
     // Play Again
     const resAgain = await againPost(createRequest(`/api/room/${code}/again`, 'POST', token1, {}), { params: { code } });
@@ -242,8 +243,13 @@ describe('API Route Handlers - Integration Tests', () => {
     const json = await expectStatus(resState, 200);
 
     expect(json.state.phase).toBe('lobby');
+    expect(json.state.roundNumber).toBe(0);
     expect(json.state.rounds).toEqual([]);
-    expect(json.state.voting.tally).toEqual([]);
+    expect(json.state.voting).toBeNull();
+    expect(json.state.reveal).toBeNull();
+    expect(json.state.players.every((p: any) => p.hasSubmittedThisRound === false)).toBe(true);
+    expect(json.state.players.every((p: any) => p.hasVoted === false)).toBe(true);
+    expect(json.state.players.some((p: any) => p.score > 0)).toBe(true);
   });
 
   it('6. Assert ROOM_NOT_FOUND (404)', async () => {

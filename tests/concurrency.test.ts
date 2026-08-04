@@ -50,4 +50,51 @@ describe('Optimistic Locking Concurrency', () => {
     expect(finalSnapshot?.messages.some((m) => m.body === 'Hint from leader')).toBe(true);
     expect(finalSnapshot?.messages.some((m) => m.body === 'Hint from P2')).toBe(true);
   });
+
+  it('should persist mutation and bump version when a player score changes with array length unchanged', async () => {
+    const store = MemoryStore.getInstance();
+    store.reset();
+
+    const { room } = await store.createRoom('SCORE1', 'hash-1', 'Leader');
+    await store.joinRoom('SCORE1', 'hash-2', 'Player 2');
+
+    const snap1 = await store.getRoomByCode('SCORE1');
+    const versionBefore = snap1!.room.version;
+
+    // Mutate only player 1 score
+    const { snapshot: snap2 } = await store.mutateRoom('SCORE1', 'hash-1', (snap) => {
+      const nextPlayers = snap.players.map((p) =>
+        p.token_hash === 'hash-1' ? { ...p, score: p.score + 1 } : p
+      );
+      return {
+        room: snap.room,
+        players: nextPlayers,
+        messages: snap.messages,
+        votes: snap.votes,
+      };
+    });
+
+    expect(snap2.room.version).toBe(versionBefore + 1);
+    const p1 = snap2.players.find((p) => p.token_hash === 'hash-1');
+    expect(p1?.score).toBe(1);
+  });
+
+  it('should skip store write and NOT bump version for a genuinely identical snapshot (no-op)', async () => {
+    const store = MemoryStore.getInstance();
+    store.reset();
+
+    await store.createRoom('NOOP1', 'hash-1', 'Leader');
+    const snap1 = await store.getRoomByCode('NOOP1');
+    const versionBefore = snap1!.room.version;
+
+    // Execute no-op mutation (returns exact input snapshot)
+    const { snapshot: snap2 } = await store.mutateRoom('NOOP1', 'hash-1', (snap) => ({
+      room: snap.room,
+      players: snap.players,
+      messages: snap.messages,
+      votes: snap.votes,
+    }));
+
+    expect(snap2.room.version).toBe(versionBefore); // Version NOT bumped!
+  });
 });

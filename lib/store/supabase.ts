@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { MAX_PLAYERS } from '../config';
 import { DbMessage, DbPlayer, DbRoom, DbVote } from '../types';
 import { RoomSnapshot, Store } from './index';
+import { isSnapshotUnchanged } from './compare';
 
 export class SupabaseStore implements Store {
   private client: SupabaseClient | null = null;
@@ -264,18 +265,7 @@ export class SupabaseStore implements Store {
       const result = mutationFn(snapshot, actingPlayer);
 
       // Skip database write and version bump when mutation result is unchanged
-      const isUnchanged =
-        result.room.phase === snapshot.room.phase &&
-        result.room.round_number === snapshot.room.round_number &&
-        result.room.phase_ends_at === snapshot.room.phase_ends_at &&
-        result.room.version === snapshot.room.version &&
-        result.room.eliminated_player_id === snapshot.room.eliminated_player_id &&
-        result.room.outcome === snapshot.room.outcome &&
-        result.players.length === snapshot.players.length &&
-        result.messages.length === snapshot.messages.length &&
-        result.votes.length === snapshot.votes.length;
-
-      if (isUnchanged) {
+      if (isSnapshotUnchanged(snapshot, result.room, result.players, result.messages, result.votes)) {
         return { snapshot, actingPlayer };
       }
 

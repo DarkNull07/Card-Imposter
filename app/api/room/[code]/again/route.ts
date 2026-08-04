@@ -33,13 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
         throw new Error('NOT_LEADER');
       }
 
-      const reset = playAgain(snap.room, snap.players);
-      return {
-        room: reset.room,
-        players: reset.players,
-        messages: snap.messages,
-        votes: snap.votes,
-      };
+      return playAgain(snap.room, snap.players);
     });
 
     const state = buildClientState(
