@@ -6,11 +6,12 @@ import { RoomSnapshot, Store } from './index';
 export class MemoryStore implements Store {
   private static instance: MemoryStore;
 
-  private rooms = new Map<string, DbRoom>(); // id -> DbRoom
-  private roomCodes = new Map<string, string>(); // code -> id
-  private players = new Map<string, DbPlayer>(); // id -> DbPlayer
-  private messages = new Map<string, DbMessage>(); // id -> DbMessage
-  private votes = new Map<string, DbVote>(); // id -> DbVote
+  private rooms: Map<string, DbRoom> = new Map();
+  private players: Map<string, DbPlayer[]> = new Map(); // room_id -> DbPlayer[]
+  private messages: Map<string, DbMessage[]> = new Map(); // room_id -> DbMessage[]
+  private votes: Map<string, DbVote[]> = new Map(); // room_id -> DbVote[]
+
+  private constructor() {}
 
   public static getInstance(): MemoryStore {
     if (!MemoryStore.instance) {
@@ -19,36 +20,27 @@ export class MemoryStore implements Store {
     return MemoryStore.instance;
   }
 
-  public reset(): void {
+  public reset() {
     this.rooms.clear();
-    this.roomCodes.clear();
     this.players.clear();
     this.messages.clear();
     this.votes.clear();
   }
 
   async getRoomByCode(code: string): Promise<RoomSnapshot | null> {
-    const roomId = this.roomCodes.get(code.toUpperCase());
-    if (!roomId) return null;
-
-    const room = this.rooms.get(roomId);
+    const uppercaseCode = code.toUpperCase();
+    const room = Array.from(this.rooms.values()).find((r) => r.code === uppercaseCode);
     if (!room) return null;
 
-    const playersList = Array.from(this.players.values())
-      .filter((p) => p.room_id === roomId)
-      .sort((a, b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime());
-
-    const messagesList = Array.from(this.messages.values())
-      .filter((m) => m.room_id === roomId)
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-    const votesList = Array.from(this.votes.values()).filter((v) => v.room_id === roomId);
+    const players = (this.players.get(room.id) || []).slice().sort((a, b) => a.joined_at.localeCompare(b.joined_at));
+    const messages = (this.messages.get(room.id) || []).slice().sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const votes = (this.votes.get(room.id) || []).slice();
 
     return {
       room: { ...room },
-      players: playersList.map((p) => ({ ...p })),
-      messages: messagesList.map((m) => ({ ...m })),
-      votes: votesList.map((v) => ({ ...v })),
+      players: players.map((p) => ({ ...p })),
+      messages: messages.map((m) => ({ ...m })),
+      votes: votes.map((v) => ({ ...v })),
     };
   }
 
@@ -58,11 +50,13 @@ export class MemoryStore implements Store {
     leaderName: string
   ): Promise<{ room: DbRoom; player: DbPlayer }> {
     const uppercaseCode = code.toUpperCase();
-    if (this.roomCodes.has(uppercaseCode)) {
+    const existing = await this.getRoomByCode(uppercaseCode);
+    if (existing) {
       throw new Error('CONFLICT_RETRY');
     }
 
     const roomId = crypto.randomUUID();
+    const playerId = crypto.randomUUID();
     const now = new Date().toISOString();
 
     const room: DbRoom = {
@@ -78,13 +72,13 @@ export class MemoryStore implements Store {
       phase_ends_at: null,
       match_number: 0,
       last_pair_index: null,
-      version: 0,
+      version: 1,
       created_at: now,
       last_activity_at: now,
     };
 
-    const player: DbPlayer = {
-      id: crypto.randomUUID(),
+    const leader: DbPlayer = {
+      id: playerId,
       room_id: roomId,
       token_hash: leaderTokenHash,
       name: leaderName.trim(),
@@ -97,10 +91,11 @@ export class MemoryStore implements Store {
     };
 
     this.rooms.set(roomId, room);
-    this.roomCodes.set(uppercaseCode, roomId);
-    this.players.set(player.id, player);
+    this.players.set(roomId, [leader]);
+    this.messages.set(roomId, []);
+    this.votes.set(roomId, []);
 
-    return { room, player };
+    return { room, player: leader };
   }
 
   async joinRoom(
@@ -108,75 +103,82 @@ export class MemoryStore implements Store {
     tokenHash: string,
     name: string
   ): Promise<{ room: DbRoom; player: DbPlayer }> {
-    const snapshot = await this.getRoomByCode(code);
-    if (!snapshot) {
-      throw new Error('ROOM_NOT_FOUND');
-    }
+    let joinedPlayer: DbPlayer | null = null;
 
-    const { room, players } = snapshot;
+    const { snapshot } = await this.mutateRoom(code, tokenHash, (snap) => {
+      const { room, players } = snap;
 
-    // Check room TTL (12h)
-    const lastActivityMs = new Date(room.last_activity_at).getTime();
-    if (Date.now() - lastActivityMs > 12 * 60 * 60 * 1000) {
-      throw new Error('ROOM_EXPIRED');
-    }
+      const lastActivityMs = new Date(room.last_activity_at).getTime();
+      if (Date.now() - lastActivityMs > 12 * 60 * 60 * 1000) {
+        throw new Error('ROOM_EXPIRED');
+      }
 
-    // Rejoin check
-    const existingPlayer = players.find((p) => p.token_hash === tokenHash);
-    if (existingPlayer) {
       const now = new Date().toISOString();
-      const updatedPlayer: DbPlayer = {
-        ...existingPlayer,
-        name: name.trim(),
+
+      const existingPlayer = players.find((p) => p.token_hash === tokenHash);
+      if (existingPlayer) {
+        joinedPlayer = {
+          ...existingPlayer,
+          name: name.trim(),
+          last_seen_at: now,
+        };
+
+        const updatedPlayers = players.map((p) => (p.id === existingPlayer.id ? joinedPlayer! : p));
+
+        return {
+          room: {
+            ...room,
+            version: room.version + 1,
+            last_activity_at: now,
+          },
+          players: updatedPlayers,
+          messages: snap.messages,
+          votes: snap.votes,
+        };
+      }
+
+      if (players.length >= MAX_PLAYERS) {
+        throw new Error('ROOM_FULL');
+      }
+
+      let finalName = name.trim();
+      const existingNames = new Set(players.map((p) => p.name.toLowerCase()));
+      if (existingNames.has(finalName.toLowerCase())) {
+        let count = 2;
+        while (existingNames.has(`${finalName.toLowerCase()} (${count})`)) {
+          count++;
+        }
+        finalName = `${finalName} (${count})`;
+      }
+
+      const isSpectator = room.phase !== 'lobby';
+
+      joinedPlayer = {
+        id: crypto.randomUUID(),
+        room_id: room.id,
+        token_hash: tokenHash,
+        name: finalName,
+        is_leader: false,
+        is_spectator: isSpectator,
+        is_eliminated: false,
+        score: 0,
+        joined_at: now,
         last_seen_at: now,
       };
-      this.players.set(existingPlayer.id, updatedPlayer);
-      return { room, player: updatedPlayer };
-    }
 
-    // Room capacity check
-    if (players.length >= MAX_PLAYERS) {
-      throw new Error('ROOM_FULL');
-    }
+      return {
+        room: {
+          ...room,
+          version: room.version + 1,
+          last_activity_at: now,
+        },
+        players: [...players, joinedPlayer],
+        messages: snap.messages,
+        votes: snap.votes,
+      };
+    });
 
-    // Deduplicate name
-    let finalName = name.trim();
-    const existingNames = new Set(players.map((p) => p.name.toLowerCase()));
-    if (existingNames.has(finalName.toLowerCase())) {
-      let count = 2;
-      while (existingNames.has(`${finalName.toLowerCase()} (${count})`)) {
-        count++;
-      }
-      finalName = `${finalName} (${count})`;
-    }
-
-    const now = new Date().toISOString();
-    const isSpectator = room.phase !== 'lobby';
-
-    const newPlayer: DbPlayer = {
-      id: crypto.randomUUID(),
-      room_id: room.id,
-      token_hash: tokenHash,
-      name: finalName,
-      is_leader: false,
-      is_spectator: isSpectator,
-      is_eliminated: false,
-      score: 0,
-      joined_at: now,
-      last_seen_at: now,
-    };
-
-    this.players.set(newPlayer.id, newPlayer);
-
-    // Update room last activity & version
-    const updatedRoom: DbRoom = {
-      ...room,
-      version: room.version + 1,
-      last_activity_at: now,
-    };
-    this.rooms.set(room.id, updatedRoom);
-
-    return { room: updatedRoom, player: newPlayer };
+    return { room: snapshot.room, player: joinedPlayer! };
   }
 
   async mutateRoom(
@@ -202,7 +204,7 @@ export class MemoryStore implements Store {
       const initialVersion = snapshot.room.version;
       const result = mutationFn(snapshot, actingPlayer);
 
-      // Optimistic lock check
+      // Check for optimistic locking conflict in memory
       const currentRoom = this.rooms.get(snapshot.room.id);
       if (!currentRoom || currentRoom.version !== initialVersion) {
         if (attempt < maxRetries) {
@@ -214,32 +216,17 @@ export class MemoryStore implements Store {
         }
       }
 
-      // Save state
-      this.rooms.set(result.room.id, result.room);
+      const nextVersion = result.room.version > initialVersion ? result.room.version : initialVersion + 1;
+      const nextRoom: DbRoom = {
+        ...result.room,
+        version: nextVersion,
+        last_activity_at: new Date().toISOString(),
+      };
 
-      // Sync players
-      const currentRoomPlayers = Array.from(this.players.values()).filter(
-        (p) => p.room_id === result.room.id
-      );
-      const nextPlayerIds = new Set(result.players.map((p) => p.id));
-      for (const p of currentRoomPlayers) {
-        if (!nextPlayerIds.has(p.id)) {
-          this.players.delete(p.id);
-        }
-      }
-      for (const p of result.players) {
-        this.players.set(p.id, p);
-      }
-
-      // Sync messages
-      for (const m of result.messages) {
-        this.messages.set(m.id, m);
-      }
-
-      // Sync votes
-      for (const v of result.votes) {
-        this.votes.set(v.id, v);
-      }
+      this.rooms.set(nextRoom.id, nextRoom);
+      this.players.set(nextRoom.id, result.players.map((p) => ({ ...p })));
+      this.messages.set(nextRoom.id, result.messages.map((m) => ({ ...m })));
+      this.votes.set(nextRoom.id, result.votes.map((v) => ({ ...v })));
 
       const updatedSnapshot = await this.getRoomByCode(code);
       const updatedActingPlayer = actingPlayer
@@ -253,12 +240,12 @@ export class MemoryStore implements Store {
   }
 
   async updatePlayerLastSeen(playerId: string): Promise<void> {
-    const player = this.players.get(playerId);
-    if (player) {
-      this.players.set(playerId, {
-        ...player,
-        last_seen_at: new Date().toISOString(),
-      });
+    for (const [roomId, playerList] of this.players.entries()) {
+      const idx = playerList.findIndex((p) => p.id === playerId);
+      if (idx !== -1) {
+        playerList[idx].last_seen_at = new Date().toISOString();
+        break;
+      }
     }
   }
 }

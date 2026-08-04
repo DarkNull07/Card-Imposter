@@ -79,7 +79,7 @@ export class SupabaseStore implements Store {
         phase: 'lobby',
         round_number: 0,
         match_number: 0,
-        version: 0,
+        version: 1, // Start version at 1
         created_at: now,
         last_activity_at: now,
       })
@@ -121,57 +121,62 @@ export class SupabaseStore implements Store {
     tokenHash: string,
     name: string
   ): Promise<{ room: DbRoom; player: DbPlayer }> {
-    const supabase = this.getClient();
+    let joinedPlayer: DbPlayer | null = null;
 
-    const snapshot = await this.getRoomByCode(code);
-    if (!snapshot) {
-      throw new Error('ROOM_NOT_FOUND');
-    }
+    const { snapshot } = await this.mutateRoom(code, tokenHash, (snap) => {
+      const { room, players } = snap;
 
-    const { room, players } = snapshot;
-
-    // Check room TTL (12h)
-    const lastActivityMs = new Date(room.last_activity_at).getTime();
-    if (Date.now() - lastActivityMs > 12 * 60 * 60 * 1000) {
-      throw new Error('ROOM_EXPIRED');
-    }
-
-    // Rejoin check
-    const existingPlayer = players.find((p) => p.token_hash === tokenHash);
-    if (existingPlayer) {
-      const now = new Date().toISOString();
-      const { data: updatedPlayer } = await supabase
-        .from('players')
-        .update({ name: name.trim(), last_seen_at: now })
-        .eq('id', existingPlayer.id)
-        .select('*')
-        .single();
-
-      return { room, player: (updatedPlayer || existingPlayer) as DbPlayer };
-    }
-
-    // Capacity check
-    if (players.length >= MAX_PLAYERS) {
-      throw new Error('ROOM_FULL');
-    }
-
-    // Name deduplication
-    let finalName = name.trim();
-    const existingNames = new Set(players.map((p) => p.name.toLowerCase()));
-    if (existingNames.has(finalName.toLowerCase())) {
-      let count = 2;
-      while (existingNames.has(`${finalName.toLowerCase()} (${count})`)) {
-        count++;
+      // Check room TTL (12h)
+      const lastActivityMs = new Date(room.last_activity_at).getTime();
+      if (Date.now() - lastActivityMs > 12 * 60 * 60 * 1000) {
+        throw new Error('ROOM_EXPIRED');
       }
-      finalName = `${finalName} (${count})`;
-    }
 
-    const now = new Date().toISOString();
-    const isSpectator = room.phase !== 'lobby';
+      const now = new Date().toISOString();
 
-    const { data: newPlayer, error: playerError } = await supabase
-      .from('players')
-      .insert({
+      // Rejoin check
+      const existingPlayer = players.find((p) => p.token_hash === tokenHash);
+      if (existingPlayer) {
+        joinedPlayer = {
+          ...existingPlayer,
+          name: name.trim(),
+          last_seen_at: now,
+        };
+
+        const updatedPlayers = players.map((p) => (p.id === existingPlayer.id ? joinedPlayer! : p));
+
+        return {
+          room: {
+            ...room,
+            version: room.version + 1,
+            last_activity_at: now,
+          },
+          players: updatedPlayers,
+          messages: snap.messages,
+          votes: snap.votes,
+        };
+      }
+
+      // Capacity check
+      if (players.length >= MAX_PLAYERS) {
+        throw new Error('ROOM_FULL');
+      }
+
+      // Name deduplication
+      let finalName = name.trim();
+      const existingNames = new Set(players.map((p) => p.name.toLowerCase()));
+      if (existingNames.has(finalName.toLowerCase())) {
+        let count = 2;
+        while (existingNames.has(`${finalName.toLowerCase()} (${count})`)) {
+          count++;
+        }
+        finalName = `${finalName} (${count})`;
+      }
+
+      const isSpectator = room.phase !== 'lobby';
+
+      joinedPlayer = {
+        id: crypto.randomUUID(),
         room_id: room.id,
         token_hash: tokenHash,
         name: finalName,
@@ -181,21 +186,21 @@ export class SupabaseStore implements Store {
         score: 0,
         joined_at: now,
         last_seen_at: now,
-      })
-      .select('*')
-      .single();
+      };
 
-    if (playerError || !newPlayer) {
-      throw new Error(`JOIN_FAILED: ${playerError?.message}`);
-    }
+      return {
+        room: {
+          ...room,
+          version: room.version + 1,
+          last_activity_at: now,
+        },
+        players: [...players, joinedPlayer],
+        messages: snap.messages,
+        votes: snap.votes,
+      };
+    });
 
-    // Update room last activity and version
-    await supabase
-      .from('rooms')
-      .update({ version: room.version + 1, last_activity_at: now })
-      .eq('id', room.id);
-
-    return { room: { ...room, version: room.version + 1 }, player: newPlayer as DbPlayer };
+    return { room: snapshot.room, player: joinedPlayer! };
   }
 
   async mutateRoom(
@@ -222,22 +227,30 @@ export class SupabaseStore implements Store {
       const initialVersion = snapshot.room.version;
       const result = mutationFn(snapshot, actingPlayer);
 
+      // Ensure room version is strictly incremented
+      const nextVersion = result.room.version > initialVersion ? result.room.version : initialVersion + 1;
+      const updatedRoomObj = {
+        ...result.room,
+        version: nextVersion,
+        last_activity_at: new Date().toISOString(),
+      };
+
       // Optimistic lock update: UPDATE rooms WHERE id = $1 AND version = $2
       const { data: updatedRoomRows, error: updateError } = await supabase
         .from('rooms')
         .update({
-          phase: result.room.phase,
-          round_number: result.room.round_number,
-          crew_card: result.room.crew_card,
-          imposter_card: result.room.imposter_card,
-          imposter_player_id: result.room.imposter_player_id,
-          eliminated_player_id: result.room.eliminated_player_id,
-          outcome: result.room.outcome,
-          phase_ends_at: result.room.phase_ends_at,
-          match_number: result.room.match_number,
-          last_pair_index: result.room.last_pair_index,
-          version: result.room.version,
-          last_activity_at: result.room.last_activity_at,
+          phase: updatedRoomObj.phase,
+          round_number: updatedRoomObj.round_number,
+          crew_card: updatedRoomObj.crew_card,
+          imposter_card: updatedRoomObj.imposter_card,
+          imposter_player_id: updatedRoomObj.imposter_player_id,
+          eliminated_player_id: updatedRoomObj.eliminated_player_id,
+          outcome: updatedRoomObj.outcome,
+          phase_ends_at: updatedRoomObj.phase_ends_at,
+          match_number: updatedRoomObj.match_number,
+          last_pair_index: updatedRoomObj.last_pair_index,
+          version: updatedRoomObj.version,
+          last_activity_at: updatedRoomObj.last_activity_at,
         })
         .eq('id', snapshot.room.id)
         .eq('version', initialVersion)

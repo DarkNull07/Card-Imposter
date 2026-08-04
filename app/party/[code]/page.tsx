@@ -21,9 +21,10 @@ export default function PartyPage() {
   const [displayName, setDisplayName] = useState<string>('');
   const [actionLoading, setActionLoading] = useState(false);
   const [toastError, setToastError] = useState<string | null>(null);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
   const [joining, setJoining] = useState(true);
 
-  // Initialize identity and auto-join
+  // Initialize identity and auto-join with timeout and error handling
   useEffect(() => {
     let token = localStorage.getItem('cardimposter.playerToken');
     if (!token) {
@@ -32,20 +33,33 @@ export default function PartyPage() {
     }
     setPlayerToken(token);
 
-    const name = localStorage.getItem('cardimposter.displayName') || '';
+    const name = (localStorage.getItem('cardimposter.displayName') || '').trim();
     setDisplayName(name);
 
     if (code) {
       localStorage.setItem('cardimposter.lastCode', code);
     }
 
-    const autoJoin = async () => {
-      if (!name) {
-        // Redirect to home if name is not set
-        router.push(`/?code=${code}`);
-        return;
-      }
+    // Fix (c): If no displayName exists, redirect immediately to /?code=CODE
+    if (!name) {
+      router.push(`/?code=${code}`);
+      setJoining(false);
+      return;
+    }
 
+    let isMounted = true;
+    const controller = new AbortController();
+
+    // Fix (a): Initial fetch timeout (8 seconds)
+    const timeoutId = setTimeout(() => {
+      if (isMounted) {
+        controller.abort();
+        setJoining(false);
+        setTerminalError('Connection timed out while joining party. Please check your connection.');
+      }
+    }, 8000);
+
+    const autoJoin = async () => {
       try {
         const res = await fetch(`/api/room/${code}/join`, {
           method: 'POST',
@@ -54,27 +68,49 @@ export default function PartyPage() {
             'x-player-token': token,
           },
           body: JSON.stringify({ name }),
+          signal: controller.signal,
         });
 
+        const json = await res.json().catch(() => ({}));
+
         if (!res.ok) {
-          const errJson = await res.json().catch(() => ({}));
-          throw new Error(errJson.message || 'Failed to join party');
+          // Fix (b): Handle 404 / 410 room non-existent or expired
+          if (res.status === 404 || json.error === 'ROOM_NOT_FOUND') {
+            setTerminalError('Party not found. Please check your party code or create a new one.');
+            return;
+          }
+          if (json.error === 'ROOM_EXPIRED') {
+            setTerminalError('Party expired. This session has timed out.');
+            return;
+          }
+          // Fix (d): Surface actual error code in toast
+          throw new Error(json.message || json.error || `Failed to join party (${res.status})`);
         }
       } catch (err: any) {
+        if (err.name === 'AbortError') return;
         setToastError(err.message || 'Failed to join party');
       } finally {
-        setJoining(false);
+        clearTimeout(timeoutId);
+        if (isMounted) {
+          setJoining(false);
+        }
       }
     };
 
     autoJoin();
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [code, router]);
 
-  // Main polling hook
+  // Main polling hook (disabled while initial joining is in progress)
   const { state, error: pollError, connectionStatus, clockOffsetMs, refreshState } = usePoll(
     code,
     playerToken,
-    !joining
+    !joining && !terminalError
   );
 
   // Send leave beacon on pagehide
@@ -108,7 +144,7 @@ export default function PartyPage() {
         headers: { 'x-player-token': playerToken },
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message || 'Failed to start game');
+      if (!res.ok) throw new Error(json.message || json.error || 'Failed to start game');
       await refreshState();
     } catch (err: any) {
       setToastError(err.message || 'Failed to start game');
@@ -145,7 +181,7 @@ export default function PartyPage() {
         body: JSON.stringify({ playerId }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message || 'Failed to kick player');
+      if (!res.ok) throw new Error(json.message || json.error || 'Failed to kick player');
       await refreshState();
     } catch (err: any) {
       setToastError(err.message || 'Failed to kick player');
@@ -168,7 +204,7 @@ export default function PartyPage() {
         body: JSON.stringify({ round: state.roundNumber, body }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message || 'Failed to submit hint');
+      if (!res.ok) throw new Error(json.message || json.error || 'Failed to submit hint');
       await refreshState();
     } catch (err: any) {
       setToastError(err.message || 'Failed to submit hint');
@@ -191,7 +227,7 @@ export default function PartyPage() {
         body: JSON.stringify({ targetPlayerId }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message || 'Failed to cast vote');
+      if (!res.ok) throw new Error(json.message || json.error || 'Failed to cast vote');
       await refreshState();
     } catch (err: any) {
       setToastError(err.message || 'Failed to cast vote');
@@ -210,7 +246,7 @@ export default function PartyPage() {
         headers: { 'x-player-token': playerToken },
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message || 'Failed to start next match');
+      if (!res.ok) throw new Error(json.message || json.error || 'Failed to start next match');
       await refreshState();
     } catch (err: any) {
       setToastError(err.message || 'Failed to start next match');
@@ -229,7 +265,7 @@ export default function PartyPage() {
         headers: { 'x-player-token': playerToken },
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message || 'Failed to end party');
+      if (!res.ok) throw new Error(json.message || json.error || 'Failed to end party');
       await refreshState();
     } catch (err: any) {
       setToastError(err.message || 'Failed to end party');
@@ -238,6 +274,34 @@ export default function PartyPage() {
     }
   };
 
+  // Render Terminal Error View (Fix b & a)
+  if (terminalError) {
+    return (
+      <div className="w-full bg-darkSurface border border-borderSubtle rounded-2xl p-8 text-center flex flex-col items-center gap-4 my-8 shadow-2xl animate-fadeIn">
+        <div className="w-12 h-12 rounded-full bg-danger/10 border border-danger/30 flex items-center justify-center text-danger text-xl font-bold">
+          ⚠️
+        </div>
+        <h2 className="text-xl font-black text-white">Party Not Found or Expired</h2>
+        <p className="text-sm text-textMuted max-w-sm">{terminalError}</p>
+        <div className="flex gap-3 mt-2">
+          <button
+            onClick={() => window.location.reload()}
+            className="min-h-[44px] px-5 py-2.5 rounded-xl font-bold text-white bg-slate-800 hover:bg-slate-700 transition"
+          >
+            Retry Connection
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            className="min-h-[44px] px-5 py-2.5 rounded-xl font-bold text-white bg-accent hover:bg-accent/90 transition"
+          >
+            Return to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Render Loading Spinner View
   if (joining || !state) {
     return (
       <div className="w-full flex flex-col items-center justify-center py-20 gap-4">

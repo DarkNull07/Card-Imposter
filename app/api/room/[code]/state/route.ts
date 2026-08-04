@@ -1,65 +1,82 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { extractPlayerToken, jsonError } from '@/lib/api';
-import { advanceIfExpired } from '@/lib/engine';
-import { hashToken } from '@/lib/hash';
+import { extractPlayerToken, formatError } from '@/lib/api';
 import { buildClientState } from '@/lib/redact';
-import { checkRateLimit } from '@/lib/rateLimit';
 import { getStore } from '@/lib/store';
+import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+};
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { code: string } }
+) {
   try {
     const token = extractPlayerToken(req);
     if (!token) {
-      return jsonError('BAD_REQUEST', 'Missing x-player-token header');
-    }
-
-    const rateCheck = checkRateLimit(token, 'poll');
-    if (!rateCheck.allowed) {
-      return jsonError('RATE_LIMITED', undefined, rateCheck.retryAfterSeconds);
-    }
-
-    const code = params.code.toUpperCase();
-    const tokenHash = hashToken(token);
-    const store = getStore();
-
-    const sinceParam = req.nextUrl.searchParams.get('since');
-    const sinceVersion = sinceParam !== null ? parseInt(sinceParam, 10) : null;
-
-    // Mutate room lazily to process timer expiries and update presence
-    const now = new Date();
-    const { snapshot, actingPlayer } = await store.mutateRoom(code, tokenHash, (snap, player) => {
-      const advanced = advanceIfExpired(snap.room, snap.players, snap.messages, snap.votes, now);
-      return advanced;
-    });
-
-    if (!actingPlayer) {
-      return jsonError('NOT_A_PLAYER');
-    }
-
-    // Update player's last_seen_at
-    await store.updatePlayerLastSeen(actingPlayer.id);
-
-    // If version is unchanged, return 204 No Content
-    if (sinceVersion !== null && !isNaN(sinceVersion) && snapshot.room.version === sinceVersion) {
-      return new NextResponse(null, {
-        status: 204,
-        headers: { 'Cache-Control': 'no-store' },
+      return NextResponse.json(formatError('MISSING_TOKEN', 'Player token header required'), {
+        status: 401,
+        headers: NO_CACHE_HEADERS,
       });
     }
 
-    const state = buildClientState(snapshot.room, snapshot.players, snapshot.messages, snapshot.votes, actingPlayer.id, now);
+    const code = params.code.toUpperCase();
+    const searchParams = req.nextUrl.searchParams;
+    const sinceParam = searchParams.get('since');
+    const sinceVersion = sinceParam !== null ? parseInt(sinceParam, 10) : null;
 
-    return NextResponse.json(
-      { state },
-      { status: 200, headers: { 'Cache-Control': 'no-store' } }
-    );
-  } catch (err: any) {
-    if (err.message?.startsWith('SUPABASE_ENV_MISSING')) {
-      return jsonError('INTERNAL', err.message);
+    const store = getStore();
+    const snapshot = await store.getRoomByCode(code);
+
+    if (!snapshot) {
+      return NextResponse.json(formatError('ROOM_NOT_FOUND', 'Room does not exist'), {
+        status: 404,
+        headers: NO_CACHE_HEADERS,
+      });
     }
-    return jsonError(err.message || 'INTERNAL');
+
+    const tokenHash = require('crypto').createHash('sha256').update(token).digest('hex');
+    const requestingPlayer = snapshot.players.find((p) => p.token_hash === tokenHash);
+
+    if (!requestingPlayer) {
+      return NextResponse.json(formatError('NOT_A_PLAYER', 'You are not in this room'), {
+        status: 403,
+        headers: NO_CACHE_HEADERS,
+      });
+    }
+
+    // Update presence
+    await store.updatePlayerLastSeen(requestingPlayer.id);
+
+    // Long poll / version check (only if sinceVersion is valid and matches current room version)
+    if (sinceVersion !== null && !isNaN(sinceVersion) && snapshot.room.version === sinceVersion) {
+      return new NextResponse(null, {
+        status: 204,
+        headers: NO_CACHE_HEADERS,
+      });
+    }
+
+    // Return full client state
+    const clientState = buildClientState(
+      snapshot.room,
+      snapshot.players,
+      snapshot.messages,
+      snapshot.votes,
+      requestingPlayer.id
+    );
+
+    return NextResponse.json({ state: clientState }, {
+      status: 200,
+      headers: NO_CACHE_HEADERS,
+    });
+  } catch (err: any) {
+    return NextResponse.json(formatError('INTERNAL_ERROR', err.message || 'Internal server error'), {
+      status: 500,
+      headers: NO_CACHE_HEADERS,
+    });
   }
 }

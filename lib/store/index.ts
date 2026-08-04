@@ -22,10 +22,16 @@ export interface Store {
   updatePlayerLastSeen(playerId: string): Promise<void>;
 }
 
+let loggedDriver = false;
+
 export function getStore(): Store {
   const driver = process.env.STORAGE_DRIVER || 'supabase';
+  if (!loggedDriver) {
+    console.log(`[CARD IMPOSTER] Active Storage Driver: ${driver}`);
+    loggedDriver = true;
+  }
+
   if (driver === 'memory') {
-    // Lazy require memory store
     const { MemoryStore } = require('./memory');
     return MemoryStore.getInstance();
   } else {

@@ -114,14 +114,48 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(resLeave.status).toBe(204);
   });
 
-  it('2. Assert ROOM_NOT_FOUND (404)', async () => {
+  it('2. Multi-client Join Version Bump Test: Player A polls version 1, Player B joins, Player A poll returns 200 OK with 2 players', async () => {
+    const tokenA = 'token-client-a';
+    const tokenB = 'token-client-b';
+
+    // Player A creates party
+    const resCreate = await createRoomPost(createRequest('/api/room', 'POST', tokenA, { name: 'PlayerA' }));
+    const jsonCreate = await expectStatus(resCreate, 201);
+    const code = jsonCreate.code;
+
+    // Player A initial state poll (no since parameter -> version 1)
+    const reqPoll1 = createRequest(`/api/room/${code}/state`, 'GET', tokenA);
+    const resPoll1 = await stateGet(reqPoll1, { params: { code } });
+    const jsonPoll1 = await expectStatus(resPoll1, 200);
+    const version1 = jsonPoll1.state.version;
+    expect(jsonPoll1.state.players).toHaveLength(1);
+
+    // Player A long-polls with ?since=version1 -> returns 204 No Content
+    const reqPoll24 = createRequest(`/api/room/${code}/state?since=${version1}`, 'GET', tokenA);
+    const resPoll24 = await stateGet(reqPoll24, { params: { code } });
+    expect(resPoll24.status).toBe(204);
+
+    // Player B joins the party
+    const reqJoinB = createRequest(`/api/room/${code}/join`, 'POST', tokenB, { name: 'PlayerB' });
+    const resJoinB = await joinRoomPost(reqJoinB, { params: { code } });
+    await expectStatus(resJoinB, 200);
+
+    // Player A long-polls again with ?since=version1 -> MUST return 200 OK with 2 players!
+    const reqPollUpdated = createRequest(`/api/room/${code}/state?since=${version1}`, 'GET', tokenA);
+    const resPollUpdated = await stateGet(reqPollUpdated, { params: { code } });
+    const jsonPollUpdated = await expectStatus(resPollUpdated, 200);
+    expect(jsonPollUpdated.state.players).toHaveLength(2);
+    expect(jsonPollUpdated.state.version).toBeGreaterThan(version1);
+  });
+
+  it('3. Assert ROOM_NOT_FOUND (404)', async () => {
     const req = createRequest('/api/room/NOPE5/join', 'POST', 'token-dummy', { name: 'Player' });
     const res = await joinRoomPost(req, { params: { code: 'NOPE5' } });
     const json = await expectStatus(res, 404);
     expect(json.error).toBe('ROOM_NOT_FOUND');
   });
 
-  it('3. Assert NOT_ENOUGH_PLAYERS (409)', async () => {
+  it('4. Assert NOT_ENOUGH_PLAYERS (409)', async () => {
     const token = 'token-leader';
     const resCreate = await createRoomPost(createRequest('/api/room', 'POST', token, { name: 'Leader' }));
     const jsonCreate = await expectStatus(resCreate, 201);
@@ -133,7 +167,7 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(jsonStart.error).toBe('NOT_ENOUGH_PLAYERS');
   });
 
-  it('4. Assert NOT_LEADER (403)', async () => {
+  it('5. Assert NOT_LEADER (403)', async () => {
     const token1 = 'token-leader';
     const token2 = 'token-joiner';
     const resCreate = await createRoomPost(createRequest('/api/room', 'POST', token1, { name: 'Leader' }));
@@ -146,7 +180,7 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(json.error).toBe('NOT_LEADER');
   });
 
-  it('5. Assert SELF_VOTE (400)', async () => {
+  it('6. Assert SELF_VOTE (400)', async () => {
     const token1 = 'token-leader';
     const token2 = 'token-p2';
     const token3 = 'token-p3';
@@ -169,7 +203,7 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(json.error).toBe('SELF_VOTE');
   });
 
-  it('6. Assert ALREADY_SUBMITTED (409)', async () => {
+  it('7. Assert ALREADY_SUBMITTED (409)', async () => {
     const token1 = 'token-p1';
     const token2 = 'token-p2';
     const token3 = 'token-p3';
@@ -187,7 +221,7 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(json.error).toBe('ALREADY_SUBMITTED');
   });
 
-  it('7. Assert ALREADY_VOTED (409)', async () => {
+  it('8. Assert ALREADY_VOTED (409)', async () => {
     const token1 = 'token-p1';
     const token2 = 'token-p2';
     const token3 = 'token-p3';
@@ -212,7 +246,7 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(json.error).toBe('ALREADY_VOTED');
   });
 
-  it('8. Assert WRONG_PHASE (409)', async () => {
+  it('9. Assert WRONG_PHASE (409)', async () => {
     const token1 = 'token-p1';
     const { code } = await expectStatus(await createRoomPost(createRequest('/api/room', 'POST', token1, { name: 'P1' })), 201);
 
@@ -222,7 +256,7 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(json.error).toBe('WRONG_PHASE');
   });
 
-  it('9. Assert NOT_A_PLAYER (403)', async () => {
+  it('10. Assert NOT_A_PLAYER (403)', async () => {
     const token1 = 'token-p1';
     const tokenUnregistered = 'token-stranger';
     const { code } = await expectStatus(await createRoomPost(createRequest('/api/room', 'POST', token1, { name: 'P1' })), 201);
@@ -233,7 +267,7 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(json.error).toBe('NOT_A_PLAYER');
   });
 
-  it('10. Assert SPECTATOR_FORBIDDEN (403)', async () => {
+  it('11. Assert SPECTATOR_FORBIDDEN (403)', async () => {
     const token1 = 'token-p1';
     const token2 = 'token-p2';
     const token3 = 'token-p3';
@@ -253,7 +287,7 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(json.error).toBe('SPECTATOR_FORBIDDEN');
   });
 
-  it('11. Assert BAD_REQUEST (400) on invalid payload sizes and empty trim', async () => {
+  it('12. Assert BAD_REQUEST (400) on invalid payload sizes and empty trim', async () => {
     const token = 'token-p1';
 
     // 1. Name too long (>16 chars)
