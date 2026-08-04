@@ -1,3 +1,5 @@
+import { MemoryStore } from './memory';
+import { SupabaseStore } from './supabase';
 import { DbMessage, DbPlayer, DbRoom, DbVote } from '../types';
 
 export interface RoomSnapshot {
@@ -10,6 +12,7 @@ export interface RoomSnapshot {
 export interface Store {
   createRoom(code: string, leaderTokenHash: string, leaderName: string): Promise<{ room: DbRoom; player: DbPlayer }>;
   getRoomByCode(code: string): Promise<RoomSnapshot | null>;
+  getRoomVersion(code: string): Promise<{ version: number; phase_ends_at: string | null; id: string } | null>;
   joinRoom(code: string, tokenHash: string, name: string): Promise<{ room: DbRoom; player: DbPlayer }>;
   mutateRoom(
     code: string,
@@ -32,10 +35,9 @@ export function getStore(): Store {
   }
 
   if (driver === 'memory') {
-    const { MemoryStore } = require('./memory');
     return MemoryStore.getInstance();
   } else {
-    const { SupabaseStore } = require('./supabase');
     return new SupabaseStore();
   }
 }
+

@@ -95,8 +95,12 @@ export function usePoll(
 
       if (!isMounted) return;
 
-      // Calculate backoff delay if failures occurred
-      let delayMs = 1000;
+      // Issue 5c: Adjust poll interval based on phase (1500ms in lobby/reveal/ended, 1000ms in round/voting)
+      let baseDelayMs = 1000;
+      if (state && (state.phase === 'lobby' || state.phase === 'reveal' || state.phase === 'ended')) {
+        baseDelayMs = 1500;
+      }
+      let delayMs = baseDelayMs;
       if (consecutiveFailuresRef.current > 0) {
         delayMs = Math.min(8000, Math.pow(2, consecutiveFailuresRef.current - 1) * 1000);
       }

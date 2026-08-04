@@ -1,7 +1,7 @@
-'use me';
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
+
 import React, { useEffect, useState } from 'react';
 import { ConnectionBadge } from '@/components/ConnectionBadge';
 import { Lobby } from '@/components/Lobby';

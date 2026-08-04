@@ -1,4 +1,6 @@
 import { extractPlayerToken, formatError } from '@/lib/api';
+import { advanceIfExpired } from '@/lib/engine';
+import { hashToken } from '@/lib/hash';
 import { buildClientState } from '@/lib/redact';
 import { getStore } from '@/lib/store';
 import { NextRequest, NextResponse } from 'next/server';
@@ -19,7 +21,7 @@ export async function GET(
     const token = extractPlayerToken(req);
     if (!token) {
       return NextResponse.json(formatError('MISSING_TOKEN', 'Player token header required'), {
-        status: 401,
+        status: 403,
         headers: NO_CACHE_HEADERS,
       });
     }
@@ -30,7 +32,31 @@ export async function GET(
     const sinceVersion = sinceParam !== null ? parseInt(sinceParam, 10) : null;
 
     const store = getStore();
-    const snapshot = await store.getRoomByCode(code);
+
+    // Issue 5b: Lightweight version check before fetching full snapshot
+    if (sinceVersion !== null && !isNaN(sinceVersion)) {
+      const roomVer = await store.getRoomVersion(code);
+      if (!roomVer) {
+        return NextResponse.json(formatError('ROOM_NOT_FOUND', 'Room does not exist'), {
+          status: 404,
+          headers: NO_CACHE_HEADERS,
+        });
+      }
+
+      const isTimerExpired =
+        roomVer.phase_ends_at !== null &&
+        new Date(roomVer.phase_ends_at).getTime() <= Date.now();
+
+      if (!isTimerExpired && roomVer.version === sinceVersion) {
+        return new NextResponse(null, {
+          status: 204,
+          headers: NO_CACHE_HEADERS,
+        });
+      }
+    }
+
+    // Fetch full room snapshot
+    let snapshot = await store.getRoomByCode(code);
 
     if (!snapshot) {
       return NextResponse.json(formatError('ROOM_NOT_FOUND', 'Room does not exist'), {
@@ -39,7 +65,7 @@ export async function GET(
       });
     }
 
-    const tokenHash = require('crypto').createHash('sha256').update(token).digest('hex');
+    const tokenHash = hashToken(token);
     const requestingPlayer = snapshot.players.find((p) => p.token_hash === tokenHash);
 
     if (!requestingPlayer) {
@@ -49,10 +75,22 @@ export async function GET(
       });
     }
 
-    // Update presence
+    // Update presence (throttled to 10s)
     await store.updatePlayerLastSeen(requestingPlayer.id);
 
-    // Long poll / version check (only if sinceVersion is valid and matches current room version)
+    // Issue 1: Restore timer engine (advanceIfExpired) in state route handler
+    const isTimerExpired =
+      snapshot.room.phase_ends_at !== null &&
+      new Date(snapshot.room.phase_ends_at).getTime() <= Date.now();
+
+    if (isTimerExpired) {
+      const mutated = await store.mutateRoom(code, null, (snap) =>
+        advanceIfExpired(snap.room, snap.players, snap.messages, snap.votes, new Date())
+      );
+      snapshot = mutated.snapshot;
+    }
+
+    // Re-check since version after potential timer mutation
     if (sinceVersion !== null && !isNaN(sinceVersion) && snapshot.room.version === sinceVersion) {
       return new NextResponse(null, {
         status: 204,

@@ -115,31 +115,12 @@ export function HomeForms() {
     const trimmedName = name.trim();
     const cleanCode = code.trim().toUpperCase();
 
+    // Issue 7a: Persist validated name to localStorage on submit
     localStorage.setItem('cardimposter.displayName', trimmedName);
     localStorage.setItem('cardimposter.lastCode', cleanCode);
-    setLoading(true);
 
-    try {
-      const res = await fetch(`/api/room/${cleanCode}/join`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-player-token': token,
-        },
-        body: JSON.stringify({ name: trimmedName }),
-      });
-
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json.message || json.error || 'Failed to join party');
-      }
-
-      router.push(`/party/${cleanCode}`);
-    } catch (err: any) {
-      setToastError(err.message || 'Failed to join party');
-    } finally {
-      setLoading(false);
-    }
+    // Issue 7b: Navigate directly to party page; /party/[code] handles joining on mount
+    router.push(`/party/${cleanCode}`);
   };
 
   const handleCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -168,7 +149,6 @@ export function HomeForms() {
             value={name}
             onChange={(e) => {
               setName(e.target.value);
-              localStorage.setItem('cardimposter.displayName', e.target.value);
               if (nameError) setNameError(null);
             }}
             placeholder="e.g. RoyalKnight"

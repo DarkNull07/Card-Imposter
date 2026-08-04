@@ -123,24 +123,24 @@ describe('API Route Handlers - Integration Tests', () => {
     const jsonCreate = await expectStatus(resCreate, 201);
     const code = jsonCreate.code;
 
-    // Player A initial state poll (no since parameter -> version 1)
+    // Player A initial state poll
     const reqPoll1 = createRequest(`/api/room/${code}/state`, 'GET', tokenA);
     const resPoll1 = await stateGet(reqPoll1, { params: { code } });
     const jsonPoll1 = await expectStatus(resPoll1, 200);
     const version1 = jsonPoll1.state.version;
     expect(jsonPoll1.state.players).toHaveLength(1);
 
-    // Player A long-polls with ?since=version1 -> returns 204 No Content
+    // Player A long-polls with ?since=version1 -> 204 No Content
     const reqPoll24 = createRequest(`/api/room/${code}/state?since=${version1}`, 'GET', tokenA);
     const resPoll24 = await stateGet(reqPoll24, { params: { code } });
     expect(resPoll24.status).toBe(204);
 
-    // Player B joins the party
+    // Player B joins party
     const reqJoinB = createRequest(`/api/room/${code}/join`, 'POST', tokenB, { name: 'PlayerB' });
     const resJoinB = await joinRoomPost(reqJoinB, { params: { code } });
     await expectStatus(resJoinB, 200);
 
-    // Player A long-polls again with ?since=version1 -> MUST return 200 OK with 2 players!
+    // Player A long-polls with ?since=version1 -> MUST return 200 OK with 2 players!
     const reqPollUpdated = createRequest(`/api/room/${code}/state?since=${version1}`, 'GET', tokenA);
     const resPollUpdated = await stateGet(reqPollUpdated, { params: { code } });
     const jsonPollUpdated = await expectStatus(resPollUpdated, 200);
@@ -148,39 +148,104 @@ describe('API Route Handlers - Integration Tests', () => {
     expect(jsonPollUpdated.state.version).toBeGreaterThan(version1);
   });
 
-  it('3. Assert ROOM_NOT_FOUND (404)', async () => {
+  it('3. Timer Expiry Test: GET /state advances expired phase and records (no message)', async () => {
+    const token1 = 'token-timer-1';
+    const token2 = 'token-timer-2';
+    const token3 = 'token-timer-3';
+
+    const { code } = await expectStatus(await createRoomPost(createRequest('/api/room', 'POST', token1, { name: 'P1' })), 201);
+    await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', token2, { name: 'P2' }), { params: { code } });
+    await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', token3, { name: 'P3' }), { params: { code } });
+    await startPost(createRequest(`/api/room/${code}/start`, 'POST', token1, {}), { params: { code } });
+
+    // Manually set phase_ends_at to past in MemoryStore
+    const store = MemoryStore.getInstance();
+    await store.mutateRoom(code, null, (snap) => ({
+      ...snap,
+      room: {
+        ...snap.room,
+        phase_ends_at: new Date(Date.now() - 5000).toISOString(), // Expired 5 seconds ago
+      },
+    }));
+
+    // Poll GET /state -> must trigger advanceIfExpired, return 200 OK, and record (no message)
+    const resPoll = await stateGet(createRequest(`/api/room/${code}/state`, 'GET', token1), { params: { code } });
+    const json = await expectStatus(resPoll, 200);
+
+    expect(json.state.roundNumber).toBe(2); // Advanced to round 2!
+    // Verify revealed messages from round 1 contain "(no message)"
+    const r1 = json.state.rounds.find((r: any) => r.roundNumber === 1);
+    expect(r1).toBeDefined();
+  });
+
+  it('4. Match Reset Cleanliness Test: Play again resets messages and votes for new match', async () => {
+    const token1 = 'token-clean-1';
+    const token2 = 'token-clean-2';
+    const token3 = 'token-clean-3';
+
+    const { code } = await expectStatus(await createRoomPost(createRequest('/api/room', 'POST', token1, { name: 'P1' })), 201);
+    const { playerId: p2Id } = await expectStatus(await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', token2, { name: 'P2' }), { params: { code } }), 200);
+    const { playerId: p3Id } = await expectStatus(await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', token3, { name: 'P3' }), { params: { code } }), 200);
+    await startPost(createRequest(`/api/room/${code}/start`, 'POST', token1, {}), { params: { code } });
+
+    // Round 1 hints
+    await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token1, { round: 1, body: 'h1' }), { params: { code } });
+    await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token2, { round: 1, body: 'h2' }), { params: { code } });
+    await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token3, { round: 1, body: 'h3' }), { params: { code } });
+
+    // Round 2 hints
+    await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token1, { round: 2, body: 'h12' }), { params: { code } });
+    await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token2, { round: 2, body: 'h22' }), { params: { code } });
+    await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token3, { round: 2, body: 'h32' }), { params: { code } });
+
+    // Votes
+    await votePost(createRequest(`/api/room/${code}/vote`, 'POST', token1, { targetPlayerId: p3Id }), { params: { code } });
+    await votePost(createRequest(`/api/room/${code}/vote`, 'POST', token2, { targetPlayerId: p3Id }), { params: { code } });
+    await votePost(createRequest(`/api/room/${code}/vote`, 'POST', token3, { targetPlayerId: p2Id }), { params: { code } });
+
+    // Play again
+    await againPost(createRequest(`/api/room/${code}/again`, 'POST', token1, {}), { params: { code } });
+
+    // Poll state for new lobby -> rounds should be empty and transcript clean
+    const resState = await stateGet(createRequest(`/api/room/${code}/state`, 'GET', token1), { params: { code } });
+    const json = await expectStatus(resState, 200);
+
+    expect(json.state.phase).toBe('lobby');
+    expect(json.state.rounds).toEqual([]);
+    expect(json.state.voting.tally).toEqual([]);
+  });
+
+  it('5. Assert ROOM_NOT_FOUND (404)', async () => {
     const req = createRequest('/api/room/NOPE5/join', 'POST', 'token-dummy', { name: 'Player' });
     const res = await joinRoomPost(req, { params: { code: 'NOPE5' } });
     const json = await expectStatus(res, 404);
     expect(json.error).toBe('ROOM_NOT_FOUND');
   });
 
-  it('4. Assert NOT_ENOUGH_PLAYERS (409)', async () => {
+  it('6. Assert NOT_ENOUGH_PLAYERS (409)', async () => {
     const token = 'token-leader';
     const resCreate = await createRoomPost(createRequest('/api/room', 'POST', token, { name: 'Leader' }));
     const jsonCreate = await expectStatus(resCreate, 201);
     const code = jsonCreate.code;
 
-    // Try starting with only 1 player
     const resStart = await startPost(createRequest(`/api/room/${code}/start`, 'POST', token, {}), { params: { code } });
     const jsonStart = await expectStatus(resStart, 409);
     expect(jsonStart.error).toBe('NOT_ENOUGH_PLAYERS');
   });
 
-  it('5. Assert NOT_LEADER (403)', async () => {
+  it('7. Assert NOT_LEADER (403)', async () => {
     const token1 = 'token-leader';
     const token2 = 'token-joiner';
     const resCreate = await createRoomPost(createRequest('/api/room', 'POST', token1, { name: 'Leader' }));
     const { code } = await expectStatus(resCreate, 201);
     await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', token2, { name: 'Player2' }), { params: { code } });
 
-    // Non-leader starts
     const resStart = await startPost(createRequest(`/api/room/${code}/start`, 'POST', token2, {}), { params: { code } });
     const json = await expectStatus(resStart, 403);
     expect(json.error).toBe('NOT_LEADER');
   });
 
-  it('6. Assert SELF_VOTE (400)', async () => {
+  it('8. Assert SELF_VOTE (400)', async () => {
     const token1 = 'token-leader';
     const token2 = 'token-p2';
     const token3 = 'token-p3';
@@ -190,20 +255,18 @@ describe('API Route Handlers - Integration Tests', () => {
     await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', token3, { name: 'P3' }), { params: { code } });
     await startPost(createRequest(`/api/room/${code}/start`, 'POST', token1, {}), { params: { code } });
 
-    // Advance to voting phase by completing 2 rounds of messages
     for (let r = 1; r <= 2; r++) {
       await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token1, { round: r, body: 'h1' }), { params: { code } });
       await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token2, { round: r, body: 'h2' }), { params: { code } });
       await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token3, { round: r, body: 'h3' }), { params: { code } });
     }
 
-    // P1 votes for P1 -> SELF_VOTE (400)
     const resVote = await votePost(createRequest(`/api/room/${code}/vote`, 'POST', token1, { targetPlayerId: p1Id }), { params: { code } });
     const json = await expectStatus(resVote, 400);
     expect(json.error).toBe('SELF_VOTE');
   });
 
-  it('7. Assert ALREADY_SUBMITTED (409)', async () => {
+  it('9. Assert ALREADY_SUBMITTED (409)', async () => {
     const token1 = 'token-p1';
     const token2 = 'token-p2';
     const token3 = 'token-p3';
@@ -215,13 +278,12 @@ describe('API Route Handlers - Integration Tests', () => {
 
     await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token1, { round: 1, body: 'Hint 1' }), { params: { code } });
 
-    // P1 submits second message in round 1 -> ALREADY_SUBMITTED (409)
     const resSub2 = await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token1, { round: 1, body: 'Hint 1 duplicate' }), { params: { code } });
     const json = await expectStatus(resSub2, 409);
     expect(json.error).toBe('ALREADY_SUBMITTED');
   });
 
-  it('8. Assert ALREADY_VOTED (409)', async () => {
+  it('10. Assert ALREADY_VOTED (409)', async () => {
     const token1 = 'token-p1';
     const token2 = 'token-p2';
     const token3 = 'token-p3';
@@ -237,37 +299,33 @@ describe('API Route Handlers - Integration Tests', () => {
       await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token3, { round: r, body: 'h3' }), { params: { code } });
     }
 
-    // P1 votes for P2
     await votePost(createRequest(`/api/room/${code}/vote`, 'POST', token1, { targetPlayerId: p2Id }), { params: { code } });
 
-    // P1 votes again -> ALREADY_VOTED (409)
     const resVote2 = await votePost(createRequest(`/api/room/${code}/vote`, 'POST', token1, { targetPlayerId: p3Id }), { params: { code } });
     const json = await expectStatus(resVote2, 409);
     expect(json.error).toBe('ALREADY_VOTED');
   });
 
-  it('9. Assert WRONG_PHASE (409)', async () => {
+  it('11. Assert WRONG_PHASE (409)', async () => {
     const token1 = 'token-p1';
     const { code } = await expectStatus(await createRoomPost(createRequest('/api/room', 'POST', token1, { name: 'P1' })), 201);
 
-    // Try voting in lobby phase -> WRONG_PHASE (409)
     const resVote = await votePost(createRequest(`/api/room/${code}/vote`, 'POST', token1, { targetPlayerId: '00000000-0000-0000-0000-000000000000' }), { params: { code } });
     const json = await expectStatus(resVote, 409);
     expect(json.error).toBe('WRONG_PHASE');
   });
 
-  it('10. Assert NOT_A_PLAYER (403)', async () => {
+  it('12. Assert NOT_A_PLAYER (403)', async () => {
     const token1 = 'token-p1';
     const tokenUnregistered = 'token-stranger';
     const { code } = await expectStatus(await createRoomPost(createRequest('/api/room', 'POST', token1, { name: 'P1' })), 201);
 
-    // Unregistered token polls state
     const res = await stateGet(createRequest(`/api/room/${code}/state`, 'GET', tokenUnregistered), { params: { code } });
     const json = await expectStatus(res, 403);
     expect(json.error).toBe('NOT_A_PLAYER');
   });
 
-  it('11. Assert SPECTATOR_FORBIDDEN (403)', async () => {
+  it('13. Assert SPECTATOR_FORBIDDEN (403)', async () => {
     const token1 = 'token-p1';
     const token2 = 'token-p2';
     const token3 = 'token-p3';
@@ -278,35 +336,29 @@ describe('API Route Handlers - Integration Tests', () => {
     await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', token3, { name: 'P3' }), { params: { code } });
     await startPost(createRequest(`/api/room/${code}/start`, 'POST', token1, {}), { params: { code } });
 
-    // Join mid-game as spectator
     await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', tokenSpec, { name: 'Spectator' }), { params: { code } });
 
-    // Spectator attempts hint submission -> SPECTATOR_FORBIDDEN (403)
     const resMsg = await messagePost(createRequest(`/api/room/${code}/message`, 'POST', tokenSpec, { round: 1, body: 'Sneaky hint' }), { params: { code } });
     const json = await expectStatus(resMsg, 403);
     expect(json.error).toBe('SPECTATOR_FORBIDDEN');
   });
 
-  it('12. Assert BAD_REQUEST (400) on invalid payload sizes and empty trim', async () => {
+  it('14. Assert BAD_REQUEST (400) on invalid payload sizes and empty trim', async () => {
     const token = 'token-p1';
 
-    // 1. Name too long (>16 chars)
     const resLongName = await createRoomPost(createRequest('/api/room', 'POST', token, { name: 'SuperExtraLongNameExceeding16' }));
     const json1 = await expectStatus(resLongName, 400);
     expect(json1.error).toBe('BAD_REQUEST');
 
-    // Create room for message testing
     const { code } = await expectStatus(await createRoomPost(createRequest('/api/room', 'POST', token, { name: 'P1' })), 201);
     await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', 'token-p2', { name: 'P2' }), { params: { code } });
     await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', 'token-p3', { name: 'P3' }), { params: { code } });
     await startPost(createRequest(`/api/room/${code}/start`, 'POST', token, {}), { params: { code } });
 
-    // 2. Message empty after trim
     const resEmptyMsg = await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token, { round: 1, body: '   ' }), { params: { code } });
     const json2 = await expectStatus(resEmptyMsg, 400);
     expect(json2.error).toBe('BAD_REQUEST');
 
-    // 3. Message too long (>140 chars)
     const longBody = 'A'.repeat(141);
     const resLongMsg = await messagePost(createRequest(`/api/room/${code}/message`, 'POST', token, { round: 1, body: longBody }), { params: { code } });
     const json3 = await expectStatus(resLongMsg, 400);

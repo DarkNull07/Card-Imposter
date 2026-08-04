@@ -7,9 +7,9 @@ export class MemoryStore implements Store {
   private static instance: MemoryStore;
 
   private rooms: Map<string, DbRoom> = new Map();
-  private players: Map<string, DbPlayer[]> = new Map(); // room_id -> DbPlayer[]
-  private messages: Map<string, DbMessage[]> = new Map(); // room_id -> DbMessage[]
-  private votes: Map<string, DbVote[]> = new Map(); // room_id -> DbVote[]
+  private players: Map<string, DbPlayer[]> = new Map();
+  private messages: Map<string, DbMessage[]> = new Map();
+  private votes: Map<string, DbVote[]> = new Map();
 
   private constructor() {}
 
@@ -27,14 +27,27 @@ export class MemoryStore implements Store {
     this.votes.clear();
   }
 
+  async getRoomVersion(code: string): Promise<{ version: number; phase_ends_at: string | null; id: string } | null> {
+    const uppercaseCode = code.toUpperCase();
+    const room = Array.from(this.rooms.values()).find((r) => r.code === uppercaseCode);
+    if (!room) return null;
+    return { id: room.id, version: room.version, phase_ends_at: room.phase_ends_at };
+  }
+
   async getRoomByCode(code: string): Promise<RoomSnapshot | null> {
     const uppercaseCode = code.toUpperCase();
     const room = Array.from(this.rooms.values()).find((r) => r.code === uppercaseCode);
     if (!room) return null;
 
     const players = (this.players.get(room.id) || []).slice().sort((a, b) => a.joined_at.localeCompare(b.joined_at));
-    const messages = (this.messages.get(room.id) || []).slice().sort((a, b) => a.created_at.localeCompare(b.created_at));
-    const votes = (this.votes.get(room.id) || []).slice();
+    // Issue 4: Filter messages and votes to the room's current match_number
+    const messages = (this.messages.get(room.id) || [])
+      .filter((m) => m.match_number === room.match_number)
+      .slice()
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const votes = (this.votes.get(room.id) || [])
+      .filter((v) => v.match_number === room.match_number)
+      .slice();
 
     return {
       room: { ...room },
@@ -204,7 +217,6 @@ export class MemoryStore implements Store {
       const initialVersion = snapshot.room.version;
       const result = mutationFn(snapshot, actingPlayer);
 
-      // Check for optimistic locking conflict in memory
       const currentRoom = this.rooms.get(snapshot.room.id);
       if (!currentRoom || currentRoom.version !== initialVersion) {
         if (attempt < maxRetries) {
@@ -225,8 +237,12 @@ export class MemoryStore implements Store {
 
       this.rooms.set(nextRoom.id, nextRoom);
       this.players.set(nextRoom.id, result.players.map((p) => ({ ...p })));
-      this.messages.set(nextRoom.id, result.messages.map((m) => ({ ...m })));
-      this.votes.set(nextRoom.id, result.votes.map((v) => ({ ...v })));
+      // Keep overall stored list in memory map, or replace with next messages/votes
+      const currentMsgs = (this.messages.get(nextRoom.id) || []).filter((m) => m.match_number !== nextRoom.match_number);
+      this.messages.set(nextRoom.id, [...currentMsgs, ...result.messages]);
+
+      const currentVotes = (this.votes.get(nextRoom.id) || []).filter((v) => v.match_number !== nextRoom.match_number);
+      this.votes.set(nextRoom.id, [...currentVotes, ...result.votes]);
 
       const updatedSnapshot = await this.getRoomByCode(code);
       const updatedActingPlayer = actingPlayer
@@ -243,7 +259,12 @@ export class MemoryStore implements Store {
     for (const [roomId, playerList] of this.players.entries()) {
       const idx = playerList.findIndex((p) => p.id === playerId);
       if (idx !== -1) {
-        playerList[idx].last_seen_at = new Date().toISOString();
+        const player = playerList[idx];
+        const diffMs = Date.now() - new Date(player.last_seen_at).getTime();
+        // Issue 5a: Only update last_seen_at if it is > 10 seconds stale
+        if (diffMs >= 10000) {
+          playerList[idx].last_seen_at = new Date().toISOString();
+        }
         break;
       }
     }

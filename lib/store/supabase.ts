@@ -24,6 +24,20 @@ export class SupabaseStore implements Store {
     return this.client;
   }
 
+  async getRoomVersion(code: string): Promise<{ version: number; phase_ends_at: string | null; id: string } | null> {
+    const supabase = this.getClient();
+    const uppercaseCode = code.toUpperCase();
+
+    const { data: room, error } = await supabase
+      .from('rooms')
+      .select('id, version, phase_ends_at')
+      .eq('code', uppercaseCode)
+      .single();
+
+    if (error || !room) return null;
+    return room as { id: string; version: number; phase_ends_at: string | null };
+  }
+
   async getRoomByCode(code: string): Promise<RoomSnapshot | null> {
     const supabase = this.getClient();
     const uppercaseCode = code.toUpperCase();
@@ -44,16 +58,19 @@ export class SupabaseStore implements Store {
       .eq('room_id', room.id)
       .order('joined_at', { ascending: true });
 
+    // Issue 4: Filter messages and votes to the room's current match_number
     const { data: messages } = await supabase
       .from('messages')
       .select('*')
       .eq('room_id', room.id)
+      .eq('match_number', room.match_number)
       .order('created_at', { ascending: true });
 
     const { data: votes } = await supabase
       .from('votes')
       .select('*')
-      .eq('room_id', room.id);
+      .eq('room_id', room.id)
+      .eq('match_number', room.match_number);
 
     return {
       room: room as DbRoom,
@@ -79,7 +96,7 @@ export class SupabaseStore implements Store {
         phase: 'lobby',
         round_number: 0,
         match_number: 0,
-        version: 1, // Start version at 1
+        version: 1,
         created_at: now,
         last_activity_at: now,
       })
@@ -126,7 +143,6 @@ export class SupabaseStore implements Store {
     const { snapshot } = await this.mutateRoom(code, tokenHash, (snap) => {
       const { room, players } = snap;
 
-      // Check room TTL (12h)
       const lastActivityMs = new Date(room.last_activity_at).getTime();
       if (Date.now() - lastActivityMs > 12 * 60 * 60 * 1000) {
         throw new Error('ROOM_EXPIRED');
@@ -134,7 +150,6 @@ export class SupabaseStore implements Store {
 
       const now = new Date().toISOString();
 
-      // Rejoin check
       const existingPlayer = players.find((p) => p.token_hash === tokenHash);
       if (existingPlayer) {
         joinedPlayer = {
@@ -157,12 +172,10 @@ export class SupabaseStore implements Store {
         };
       }
 
-      // Capacity check
       if (players.length >= MAX_PLAYERS) {
         throw new Error('ROOM_FULL');
       }
 
-      // Name deduplication
       let finalName = name.trim();
       const existingNames = new Set(players.map((p) => p.name.toLowerCase()));
       if (existingNames.has(finalName.toLowerCase())) {
@@ -227,7 +240,6 @@ export class SupabaseStore implements Store {
       const initialVersion = snapshot.room.version;
       const result = mutationFn(snapshot, actingPlayer);
 
-      // Ensure room version is strictly incremented
       const nextVersion = result.room.version > initialVersion ? result.room.version : initialVersion + 1;
       const updatedRoomObj = {
         ...result.room,
@@ -235,7 +247,6 @@ export class SupabaseStore implements Store {
         last_activity_at: new Date().toISOString(),
       };
 
-      // Optimistic lock update: UPDATE rooms WHERE id = $1 AND version = $2
       const { data: updatedRoomRows, error: updateError } = await supabase
         .from('rooms')
         .update({
@@ -267,6 +278,12 @@ export class SupabaseStore implements Store {
       }
 
       // Sync players
+      const nextPlayerIds = new Set(result.players.map((p) => p.id));
+      for (const p of snapshot.players) {
+        if (!nextPlayerIds.has(p.id)) {
+          await supabase.from('players').delete().eq('id', p.id);
+        }
+      }
       for (const p of result.players) {
         await supabase.from('players').upsert({
           id: p.id,
@@ -282,15 +299,13 @@ export class SupabaseStore implements Store {
         });
       }
 
-      // Remove deleted players
-      const nextPlayerIds = new Set(result.players.map((p) => p.id));
-      for (const p of snapshot.players) {
-        if (!nextPlayerIds.has(p.id)) {
-          await supabase.from('players').delete().eq('id', p.id);
+      // Sync messages (Issue 4: Delete stale messages from database)
+      const nextMessageIds = new Set(result.messages.map((m) => m.id));
+      for (const m of snapshot.messages) {
+        if (!nextMessageIds.has(m.id)) {
+          await supabase.from('messages').delete().eq('id', m.id);
         }
       }
-
-      // Sync messages
       for (const m of result.messages) {
         await supabase.from('messages').upsert({
           id: m.id,
@@ -303,7 +318,13 @@ export class SupabaseStore implements Store {
         });
       }
 
-      // Sync votes
+      // Sync votes (Issue 4: Delete stale votes from database)
+      const nextVoteIds = new Set(result.votes.map((v) => v.id));
+      for (const v of snapshot.votes) {
+        if (!nextVoteIds.has(v.id)) {
+          await supabase.from('votes').delete().eq('id', v.id);
+        }
+      }
       for (const v of result.votes) {
         await supabase.from('votes').upsert({
           id: v.id,
@@ -328,6 +349,20 @@ export class SupabaseStore implements Store {
 
   async updatePlayerLastSeen(playerId: string): Promise<void> {
     const supabase = this.getClient();
+    // Issue 5a: Only write last_seen_at if it is > 10 seconds stale
+    const { data: player } = await supabase
+      .from('players')
+      .select('last_seen_at')
+      .eq('id', playerId)
+      .single();
+
+    if (player && player.last_seen_at) {
+      const diffMs = Date.now() - new Date(player.last_seen_at).getTime();
+      if (diffMs < 10000) {
+        return;
+      }
+    }
+
     await supabase
       .from('players')
       .update({ last_seen_at: new Date().toISOString() })
