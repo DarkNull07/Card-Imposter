@@ -10,6 +10,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    env: {
+      STORAGE_DRIVER: 'memory',
+    },
     exclude: ['tests/e2e/**', 'node_modules/**'],
   },
 });

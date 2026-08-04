@@ -1,11 +1,16 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import React from 'react';
 import './globals.css';
 
 export const metadata: Metadata = {
   title: 'CARD IMPOSTER - Clash Royale Social Deduction Game',
   description: 'A multiplayer social-deduction word game in the style of Spyfall, themed on Clash Royale card names.',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({
