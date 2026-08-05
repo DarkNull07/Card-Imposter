@@ -1,5 +1,6 @@
 import { extractPlayerToken, handleRouteError, jsonError, jsonStateResponse } from '@/lib/api';
-import { advanceIfExpired } from '@/lib/engine';
+import { advanceIfExpired, reconcileLeadership } from '@/lib/engine';
+import { DISCONNECT_GRACE_SECONDS } from '@/lib/config';
 import { hashToken } from '@/lib/hash';
 import { buildClientState } from '@/lib/redact';
 import { getStore } from '@/lib/store';
@@ -71,6 +72,33 @@ export async function GET(
 
     // Update presence (throttled to 10s)
     await store.updatePlayerLastSeen(requestingPlayer.id);
+
+    // Leader failover check: if current leader is stale (>45s), failover to earliest connected player
+    const currentLeader = snapshot.players.find((p) => p.is_leader);
+    const nowMs = Date.now();
+    const isLeaderStale =
+      currentLeader &&
+      (nowMs - new Date(currentLeader.last_seen_at).getTime()) / 1000 > DISCONNECT_GRACE_SECONDS;
+
+    if (isLeaderStale) {
+      const mutatedLeader = await store.mutateRoom(code, null, (snap) => {
+        const nextPlayers = reconcileLeadership(snap.players, nowMs);
+        const leaderChanged = nextPlayers.some(
+          (p) => p.is_leader !== snap.players.find((oldP) => oldP.id === p.id)?.is_leader
+        );
+        if (!leaderChanged) return snap;
+        return {
+          ...snap,
+          players: nextPlayers,
+          room: {
+            ...snap.room,
+            version: snap.room.version + 1,
+            last_activity_at: new Date().toISOString(),
+          },
+        };
+      });
+      snapshot = mutatedLeader.snapshot;
+    }
 
     // Timer engine: only advance active phases (round or voting) when timer is expired
     const isTimerExpired =

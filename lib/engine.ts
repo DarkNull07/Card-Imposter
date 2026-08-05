@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { CARD_PAIRS } from './cards';
 import {
+  DISCONNECT_GRACE_SECONDS,
   MIN_PLAYERS,
   ROUND_SECONDS,
   TOTAL_ROUNDS,
@@ -91,7 +92,7 @@ export function advanceIfExpired(
       }
     }
 
-    return resolveVoting(nextRoom, players, nextVotes);
+    return resolveVoting(nextRoom, players, nextVotes, nextMessages);
   }
 
   return { room: nextRoom, players, messages: nextMessages, votes: nextVotes };
@@ -276,7 +277,7 @@ export function castVote(
   let nextRoom = { ...room, version: room.version + 1, last_activity_at: now.toISOString() };
 
   if (currentMatchVotes.length >= activeAlivePlayers.length) {
-    return resolveVoting(nextRoom, players, nextVotes);
+    return resolveVoting(nextRoom, players, nextVotes, messages);
   }
 
   return { room: nextRoom, players, messages, votes: nextVotes };
@@ -285,7 +286,8 @@ export function castVote(
 export function resolveVoting(
   room: DbRoom,
   players: DbPlayer[],
-  votes: DbVote[]
+  votes: DbVote[],
+  messages: DbMessage[] = []
 ): EngineResult {
   const currentMatchVotes = votes.filter((v) => v.match_number === room.match_number);
 
@@ -344,7 +346,7 @@ export function resolveVoting(
     last_activity_at: new Date().toISOString(),
   };
 
-  return { room: nextRoom, players: nextPlayers, messages: [], votes };
+  return { room: nextRoom, players: nextPlayers, messages, votes };
 }
 
 export function playAgain(
@@ -446,9 +448,46 @@ export function removePlayer(
   } else if (nextRoom.phase === 'voting') {
     const currentMatchVotes = votes.filter((v) => v.match_number === nextRoom.match_number);
     if (activeAlivePlayers.length > 0 && currentMatchVotes.length >= activeAlivePlayers.length) {
-      return resolveVoting(nextRoom, updatedPlayers, votes);
+      return resolveVoting(nextRoom, updatedPlayers, votes, messages);
     }
   }
 
   return { room: nextRoom, players: updatedPlayers, messages, votes };
+}
+
+export function reconcileLeadership(
+  players: DbPlayer[],
+  nowMs: number = Date.now()
+): DbPlayer[] {
+  const currentLeader = players.find((p) => p.is_leader);
+  if (!currentLeader) {
+    const earliest = [...players].sort(
+      (a, b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime()
+    )[0];
+    if (!earliest) return players;
+    return players.map((p) => ({ ...p, is_leader: p.id === earliest.id }));
+  }
+
+  const leaderLastSeenMs = new Date(currentLeader.last_seen_at).getTime();
+  const isLeaderDisconnected = (nowMs - leaderLastSeenMs) / 1000 > DISCONNECT_GRACE_SECONDS;
+
+  if (isLeaderDisconnected) {
+    const connectedPlayers = players.filter((p) => {
+      const seenMs = new Date(p.last_seen_at).getTime();
+      return (nowMs - seenMs) / 1000 <= DISCONNECT_GRACE_SECONDS;
+    });
+
+    if (connectedPlayers.length > 0) {
+      const earliestConnected = [...connectedPlayers].sort(
+        (a, b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime()
+      )[0];
+
+      return players.map((p) => ({
+        ...p,
+        is_leader: p.id === earliestConnected.id,
+      }));
+    }
+  }
+
+  return players;
 }

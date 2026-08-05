@@ -44,7 +44,8 @@ export function isSnapshotUnchanged(
       p1.is_spectator !== p2.is_spectator ||
       p1.is_eliminated !== p2.is_eliminated ||
       p1.score !== p2.score ||
-      p1.joined_at !== p2.joined_at
+      p1.joined_at !== p2.joined_at ||
+      p1.last_seen_at !== p2.last_seen_at
     ) {
       return false;
     }

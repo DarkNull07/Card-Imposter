@@ -40,7 +40,20 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
       if (!player) {
         return snap;
       }
-      return removePlayer(snap.room, snap.players, snap.messages, snap.votes, player.id);
+      const now = new Date().toISOString();
+      const updatedPlayers = snap.players.map((p) =>
+        p.id === player.id ? { ...p, last_seen_at: new Date(Date.now() - 60000).toISOString() } : p
+      );
+      return {
+        room: {
+          ...snap.room,
+          version: snap.room.version + 1,
+          last_activity_at: now,
+        },
+        players: updatedPlayers,
+        messages: snap.messages,
+        votes: snap.votes,
+      };
     });
 
     return new NextResponse(null, {
