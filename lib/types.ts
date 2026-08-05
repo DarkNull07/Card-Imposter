@@ -15,6 +15,7 @@ export interface DbRoom {
   match_number: number;
   last_pair_index: number | null;
   version: number;
+  banned_token_hashes?: string[];
   created_at: string;
   last_activity_at: string;
 }
@@ -58,6 +59,7 @@ export interface YouState {
   isLeader: boolean;
   isSpectator: boolean;
   isEliminated: boolean;
+  score: number;
   card: string | null;
   hasSubmittedThisRound: boolean;
   myMessageThisRound: string | null;

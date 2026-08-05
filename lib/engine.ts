@@ -427,7 +427,16 @@ export function removePlayer(
     }));
   }
 
-  let nextRoom = { ...room, version: room.version + 1, last_activity_at: now.toISOString() };
+  const bannedHashes = Array.from(
+    new Set([...(room.banned_token_hashes || []), ...(targetPlayer ? [targetPlayer.token_hash] : [])])
+  );
+
+  let nextRoom = {
+    ...room,
+    banned_token_hashes: bannedHashes,
+    version: room.version + 1,
+    last_activity_at: now.toISOString(),
+  };
 
   // Check phase conditions after departure
   const activeAlivePlayers = updatedPlayers.filter((p) => !p.is_spectator && !p.is_eliminated);

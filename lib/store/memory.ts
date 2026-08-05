@@ -141,6 +141,10 @@ export class MemoryStore implements Store {
     const { snapshot } = await this.mutateRoom(code, tokenHash, (snap) => {
       const { room, players } = snap;
 
+      if (room.banned_token_hashes?.includes(tokenHash)) {
+        throw new Error('BANNED');
+      }
+
       const lastActivityMs = new Date(room.last_activity_at).getTime();
       if (Date.now() - lastActivityMs > 12 * 60 * 60 * 1000) {
         throw new Error('ROOM_EXPIRED');

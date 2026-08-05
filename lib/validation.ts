@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MAX_MESSAGE_LENGTH, MAX_NAME_LENGTH, MIN_NAME_LENGTH } from './config';
+import { MAX_MESSAGE_LENGTH, MAX_NAME_LENGTH, MIN_NAME_LENGTH, TOTAL_ROUNDS } from './config';
 
 export const createRoomSchema = z.object({
   name: z
@@ -18,7 +18,7 @@ export const joinRoomSchema = z.object({
 });
 
 export const submitMessageSchema = z.object({
-  round: z.number().int().min(1).max(2),
+  round: z.number().int().min(1).max(TOTAL_ROUNDS),
   body: z
     .string()
     .trim()

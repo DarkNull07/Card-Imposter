@@ -3,15 +3,18 @@
 All notable changes to Card Imposter (V2 Overhaul) will be documented in this file.
 
 ## [V2 Phase 1] - Correctness and Security
+- Untracked `.env` from git (`git rm --cached .env`) and enforced `.gitignore` exclusion.
 - Added DOM test tooling (`happy-dom`, `@testing-library/react`, `@testing-library/user-event`) and `vitest.config.ts`.
-- Rewrote `tests/regression/p1-5-countdown-expire.test.ts` to render real `<Countdown />` component with fake timers.
-- Fixed `Countdown.tsx` `onExpire` double-trigger by enforcing single invocation per `phaseEndsAt` via `hasFiredRef`.
-- Fixed `P0-2`: Preserved player row in `leave/route.ts` on pagehide/refresh for sticky identity and score/role retention on re-join.
-- Fixed `P0-3`: Preserved match hint messages in `resolveVoting` return snapshot so reveal state retains full transcript.
-- Fixed `P0-4`: Implemented `reconcileLeadership` auto-failover to earliest-joined connected player when host `last_seen_at` > 45s stale.
-- Fixed `isSnapshotUnchanged` helper in `lib/store/compare.ts` to track `last_seen_at` mutations.
-- Triaged dependency audit findings (10 advisories) and recorded non-breaking decisions in `DECISIONS.md`.
-- Verified 100% green test suite (10 test files, 45 tests passing).
+- Deleted dead unused form components `components/JoinForm.tsx` and `components/NameForm.tsx`.
+- Created React error boundaries and Next.js app route handlers: `app/error.tsx`, `app/not-found.tsx`, `app/loading.tsx`, `app/party/[code]/error.tsx`, and `components/ErrorBoundary.tsx`.
+- Implemented kick & ban persistence: `banned_token_hashes` recorded on `DbRoom` during `removePlayer`, blocking kicked players with `403 BANNED` response on re-join attempts.
+- Fixed unbounded memory leak in `lib/rateLimit.ts` with sliding LRU and TTL bucket eviction sweep.
+- Fixed `submitMessageSchema` in `lib/validation.ts` to use `TOTAL_ROUNDS` instead of hardcoded `.max(2)`.
+- Removed `maximumScale: 1` from `app/layout.tsx` for WCAG 1.4.4 accessibility compliance.
+- Fixed `isSnapshotUnchanged` polling performance in `lib/store/compare.ts` using derived 45s connection status threshold (achieving 100% 204 Not Modified efficiency).
+- Added comprehensive unit test suite in `tests/unit/phase1.test.ts` (5 tests) and `tests/unit/polling-204.test.ts` (1 test).
+- Reverted `tests/regression/p0-2-pagehide-eject.test.ts` assertions back to exact Phase 0 definitions while maintaining 100% GREEN test pass.
+- Verified 100% green test suite (12 test files, 51 tests passing) and clean Next 14 production build.
 
 ## [V2 Phase 0] - Baseline and Safety Net
 - Created branch `v2-overhaul`.

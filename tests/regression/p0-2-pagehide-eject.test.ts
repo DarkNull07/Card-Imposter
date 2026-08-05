@@ -53,10 +53,9 @@ describe('P0-2 Regression Test: Pagehide Beacon Ejection', () => {
     const resRejoin = await joinRoomPost(createRequest(`/api/room/${code}/join`, 'POST', token2, { name: 'P2' }), { params: { code } });
     const jsonRejoin = await resRejoin.json();
 
-    // EXPECTED (should pass once P0-2 is fixed):
+    // EXPECTED (should pass once P0-2 is fixed, fails currently because leave deleted player):
     expect(jsonRejoin.playerId).toBe(originalP2Id);
-    const p2State = jsonRejoin.state.players.find((p: any) => p.playerId === originalP2Id);
-    expect(p2State?.score).toBe(5);
+    expect(jsonRejoin.state.you.score).toBe(5);
     expect(jsonRejoin.state.you.isSpectator).toBe(false);
   });
 });

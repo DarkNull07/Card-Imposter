@@ -32,9 +32,13 @@ export function isSnapshotUnchanged(
   if (before.players.length !== afterPlayers.length) return false;
   const sortedP1 = [...before.players].sort((a, b) => a.id.localeCompare(b.id));
   const sortedP2 = [...afterPlayers].sort((a, b) => a.id.localeCompare(b.id));
+  const nowMs = Date.now();
   for (let i = 0; i < sortedP1.length; i++) {
     const p1 = sortedP1[i];
     const p2 = sortedP2[i];
+    const p1Connected = (nowMs - new Date(p1.last_seen_at).getTime()) / 1000 <= 45;
+    const p2Connected = (nowMs - new Date(p2.last_seen_at).getTime()) / 1000 <= 45;
+
     if (
       p1.id !== p2.id ||
       p1.room_id !== p2.room_id ||
@@ -45,7 +49,7 @@ export function isSnapshotUnchanged(
       p1.is_eliminated !== p2.is_eliminated ||
       p1.score !== p2.score ||
       p1.joined_at !== p2.joined_at ||
-      p1.last_seen_at !== p2.last_seen_at
+      p1Connected !== p2Connected
     ) {
       return false;
     }
