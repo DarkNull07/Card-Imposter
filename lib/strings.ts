@@ -14,6 +14,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   SPECTATOR_FORBIDDEN: 'Spectators cannot submit messages or vote.',
   ELIMINATED_FORBIDDEN: 'Eliminated players cannot submit messages or vote.',
   RATE_LIMITED: 'Too many requests. Please slow down.',
+  BANNED: 'You have been kicked from this room.',
   CONFLICT_RETRY: 'System busy with simultaneous updates. Please try again.',
   INTERNAL: 'An unexpected internal error occurred.',
 };

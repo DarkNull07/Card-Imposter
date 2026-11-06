@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 interface CountdownProps {
   phaseEndsAt: string | null;
@@ -12,8 +12,11 @@ export const Countdown: React.FC<CountdownProps> = ({
   onExpire,
 }) => {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const hasFiredRef = useRef<boolean>(false);
 
   useEffect(() => {
+    hasFiredRef.current = false;
+
     if (!phaseEndsAt) {
       setSecondsLeft(null);
       return;
@@ -27,7 +30,8 @@ export const Countdown: React.FC<CountdownProps> = ({
       const secs = Math.max(0, Math.ceil(remainingMs / 1000));
       setSecondsLeft(secs);
 
-      if (secs === 0 && onExpire) {
+      if (secs === 0 && !hasFiredRef.current && onExpire) {
+        hasFiredRef.current = true;
         onExpire();
       }
     };

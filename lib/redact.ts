@@ -57,6 +57,7 @@ export function buildClientState(
     isLeader: youPlayer.is_leader,
     isSpectator: youPlayer.is_spectator,
     isEliminated: youPlayer.is_eliminated,
+    score: youPlayer.score,
     card: myCard,
     hasSubmittedThisRound: !!myCurrentMessage,
     myMessageThisRound: myCurrentMessage ? myCurrentMessage.body : null,
